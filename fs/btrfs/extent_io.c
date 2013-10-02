@@ -4272,6 +4272,7 @@ int extent_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 
 	while (!end) {
 		u64 offset_in_extent = 0;
+		u64 em_phys_len = 0;
 
 		/* break if the extent we found is outside the range */
 		if (em->start >= max || extent_map_end(em) < off)
@@ -4334,8 +4335,12 @@ int extent_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 			if (ref_cnt > 1)
 				flags |= FIEMAP_EXTENT_SHARED;
 		}
-		if (test_bit(EXTENT_FLAG_COMPRESSED, &em->flags))
-			flags |= FIEMAP_EXTENT_ENCODED;
+		if (test_bit(EXTENT_FLAG_COMPRESSED, &em->flags)) {
+			flags |= FIEMAP_EXTENT_ENCODED |
+				 FIEMAP_EXTENT_DATA_COMPRESSED |
+				 FIEMAP_EXTENT_PHYS_LENGTH;
+			em_phys_len = em->block_len;
+		}
 
 		free_extent_map(em);
 		em = NULL;
@@ -4357,7 +4362,7 @@ int extent_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 			end = 1;
 		}
 		ret = fiemap_fill_next_extent(fieinfo, em_start, disko,
-					      em_len, 0, flags);
+					      em_len, em_phys_len, flags);
 		if (ret)
 			goto out_free;
 	}
