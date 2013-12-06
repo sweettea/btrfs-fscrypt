@@ -322,7 +322,7 @@ enum {
 	Opt_no_space_cache, Opt_recovery, Opt_skip_balance,
 	Opt_check_integrity, Opt_check_integrity_including_extent_data,
 	Opt_check_integrity_print_mask, Opt_fatal_errors, Opt_rescan_uuid_tree,
-	Opt_commit_interval,
+	Opt_commit_interval, Opt_nometasum,
 	Opt_err,
 };
 
@@ -365,6 +365,7 @@ static match_table_t tokens = {
 	{Opt_rescan_uuid_tree, "rescan_uuid_tree"},
 	{Opt_fatal_errors, "fatal_errors=%s"},
 	{Opt_commit_interval, "commit=%d"},
+	{Opt_nometasum, "_nometasum"},
 	{Opt_err, NULL},
 };
 
@@ -674,6 +675,11 @@ int btrfs_parse_options(struct btrfs_root *root, char *options)
 				    BTRFS_DEFAULT_COMMIT_INTERVAL);
 				info->commit_interval = BTRFS_DEFAULT_COMMIT_INTERVAL;
 			}
+			break;
+		case Opt_nometasum:
+			printk(KERN_INFO "btrfs: turning off metadata checksums permanently\n");
+			btrfs_set_opt(info->mount_opt, NOMETASUM);
+			btrfs_set_fs_incompat(info, NOMETASUM);
 			break;
 		case Opt_err:
 			printk(KERN_INFO "btrfs: unrecognized mount option "
@@ -1013,6 +1019,8 @@ static int btrfs_show_options(struct seq_file *seq, struct dentry *dentry)
 		seq_puts(seq, ",fatal_errors=panic");
 	if (info->commit_interval != BTRFS_DEFAULT_COMMIT_INTERVAL)
 		seq_printf(seq, ",commit=%d", info->commit_interval);
+	if (btrfs_test_opt(root, NOMETASUM))
+		seq_puts(seq, ",_nometasum");
 	return 0;
 }
 
