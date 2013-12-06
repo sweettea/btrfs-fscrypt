@@ -270,6 +270,9 @@ static int csum_tree_block(struct btrfs_root *root, struct extent_buffer *buf,
 	u32 crc = ~(u32)0;
 	unsigned long inline_result;
 
+	if (btrfs_fs_incompat(root->fs_info, NOMETASUM))
+		return 0;
+
 	len = buf->len - offset;
 	while (len > 0) {
 		err = map_private_extent_buffer(buf, offset, 32,
@@ -2451,6 +2454,10 @@ int open_ctree(struct super_block *sb,
 				sb->s_id);
 		goto fail_alloc;
 	}
+
+	if ((features & BTRFS_FEATURE_INCOMPAT_NOMETASUM))
+		printk(KERN_INFO "btrfs: metadata checksumming is turned off on %s\n",
+				sb->s_id);
 
 	/*
 	 * Needn't use the lock because there is no other task which will

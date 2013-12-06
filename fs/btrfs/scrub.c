@@ -1695,6 +1695,9 @@ static int scrub_checksum_tree_block(struct scrub_block *sblock)
 	u64 len;
 	int index;
 
+	if (btrfs_fs_incompat(fs_info, NOMETASUM))
+		return 0;
+
 	BUG_ON(sblock->page_count < 1);
 	page = sblock->pagev[0]->page;
 	mapped_buffer = kmap_atomic(page);
