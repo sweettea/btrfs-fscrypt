@@ -120,7 +120,7 @@ struct btrfs_pending_snapshot {
 	u64 qgroup_reserved;
 	/* extra metadata reseration for relocation */
 	int error;
-	bool readonly;
+	unsigned ro_flags;
 	struct list_head list;
 };
 

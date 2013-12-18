@@ -36,6 +36,7 @@ struct btrfs_ioctl_vol_args {
 #define BTRFS_SUBVOL_CREATE_ASYNC	(1ULL << 0)
 #define BTRFS_SUBVOL_RDONLY		(1ULL << 1)
 #define BTRFS_SUBVOL_QGROUP_INHERIT	(1ULL << 2)
+#define BTRFS_SUBVOL_SEALED		(1ULL << 3)
 #define BTRFS_FSID_SIZE 16
 #define BTRFS_UUID_SIZE 16
 
