@@ -2319,7 +2319,7 @@ out_up_write:
 out_unlock:
 	mutex_unlock(&inode->i_mutex);
 	if (!err) {
-		shrink_dcache_sb(root->fs_info->sb);
+		shrink_dcache_parent(dentry);
 		btrfs_invalidate_inodes(dest);
 		d_delete(dentry);
 
