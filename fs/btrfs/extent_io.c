@@ -4357,7 +4357,7 @@ int extent_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 			end = 1;
 		}
 		ret = fiemap_fill_next_extent(fieinfo, em_start, disko,
-					      em_len, flags);
+					      em_len, 0, flags);
 		if (ret)
 			goto out_free;
 	}

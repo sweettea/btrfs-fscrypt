@@ -1030,7 +1030,7 @@ xfs_fiemap_format(
 		fiemap_flags |= FIEMAP_EXTENT_LAST;
 
 	error = fiemap_fill_next_extent(fieinfo, logical, physical,
-					length, fiemap_flags);
+					length, 0, fiemap_flags);
 	if (error > 0) {
 		error = 0;
 		*full = 1;	/* user array now full */
