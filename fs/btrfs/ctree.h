@@ -1378,6 +1378,25 @@ struct btrfs_stripe_hash_table {
 
 void btrfs_init_async_reclaim_work(struct work_struct *work);
 
+struct btrfs_mount_opts {
+	/*
+	 * Mount options for a subvolume mounted separately
+	 */
+	unsigned long mount_opt;
+	unsigned long mount_opt_isset;
+	/*
+	 * Local data
+	 */
+	u8 compress_type;
+	/*
+	 * It is a suggestive number, the read side is safe even it gets a
+	 * wrong number because we will write out the data into a regular
+	 * extent. The write side(mount/remount) is under ->s_umount lock,
+	 * so it is also safe.
+	 */
+	u64 max_inline;
+};
+
 /* fs_info */
 struct reloc_control;
 struct btrfs_device;
@@ -1442,21 +1461,16 @@ struct btrfs_fs_info {
 	 * is required instead of the faster short fsync log commits
 	 */
 	u64 last_trans_log_full_commit;
-	unsigned long mount_opt;
 	/*
 	 * Track requests for actions that need to be done during transaction
 	 * commit (like for some mount options).
 	 */
 	unsigned long pending_changes;
-	unsigned long compress_type:4;
 	int commit_interval;
 	/*
-	 * It is a suggestive number, the read side is safe even it gets a
-	 * wrong number because we will write out the data into a regular
-	 * extent. The write side(mount/remount) is under ->s_umount lock,
-	 * so it is also safe.
+	 * Whole filesystem options
 	 */
-	u64 max_inline;
+	struct btrfs_mount_opts mount_opts;
 	/*
 	 * Protected by ->chunk_mutex and sb->s_umount.
 	 *
@@ -1949,6 +1963,8 @@ struct btrfs_root {
 	int send_in_progress;
 	struct btrfs_subvolume_writers *subv_writers;
 	atomic_t will_be_snapshoted;
+
+	struct btrfs_mount_opts mount_opts;
 };
 
 struct btrfs_ioctl_defrag_range_args {
@@ -2151,14 +2167,37 @@ struct btrfs_ioctl_defrag_range_args {
 #define BTRFS_MOUNT_CHECK_INTEGRITY_INCLUDING_EXTENT_DATA (1 << 21)
 #define BTRFS_MOUNT_PANIC_ON_FATAL_ERROR	(1 << 22)
 #define BTRFS_MOUNT_RESCAN_UUID_TREE	(1 << 23)
+#define BTRFS_MOUNT_MAX_INLINE		(1 << 24)
 
 #define BTRFS_DEFAULT_COMMIT_INTERVAL	(30)
 #define BTRFS_DEFAULT_MAX_INLINE	(8192)
 
-#define btrfs_clear_opt(o, opt)		((o)->mount_opt &= ~BTRFS_MOUNT_##opt)
-#define btrfs_set_opt(o, opt)		((o)->mount_opt |= BTRFS_MOUNT_##opt)
-#define btrfs_raw_test_opt(o, opt)	((o) & BTRFS_MOUNT_##opt)
-#define btrfs_test_opt(o, opt)		((o)->mount_opt & BTRFS_MOUNT_##opt)
+#define btrfs_clear_opt(owner, opt)					\
+	__btrfs_clear_opt(&((owner)->mount_opts), BTRFS_MOUNT_##opt)
+static inline void __btrfs_clear_opt(struct btrfs_mount_opts *opts, unsigned opt)
+{
+	opts->mount_opt &= ~opt;
+	opts->mount_opt_isset &= ~opt;
+}
+
+#define btrfs_set_opt(owner, opt)					\
+	__btrfs_set_opt(&((owner)->mount_opts), BTRFS_MOUNT_##opt)
+static inline void __btrfs_set_opt(struct btrfs_mount_opts *opts, unsigned opt)
+{
+	opts->mount_opt |= opt;
+	opts->mount_opt_isset |= opt;
+}
+
+#define btrfs_test_opt(owner, opt)					\
+	__btrfs_test_opt(&((owner)->mount_opts), BTRFS_MOUNT_##opt)
+static inline bool __btrfs_test_opt(struct btrfs_mount_opts *opts, unsigned opt)
+{
+	return (opts->mount_opt_isset & opt) && (opts->mount_opt & opt);
+}
+
+#define btrfs_get_opt_value(owner, item)	((owner)->mount_opts.item)
+#define btrfs_set_opt_value(owner, item, value)				\
+	((owner)->mount_opts.item = (value))
 
 #define btrfs_set_and_info(info, opt, fmt, args...)			\
 {									\
@@ -2201,7 +2240,7 @@ struct btrfs_ioctl_defrag_range_args {
  */
 #define btrfs_set_pending_and_info(info, opt, fmt, args...)            \
 do {                                                                   \
-       if (!btrfs_raw_test_opt((info)->mount_opt, opt)) {              \
+       if (!btrfs_test_opt((info), opt)) {                             \
                btrfs_info((info), fmt, ##args);                        \
                btrfs_set_pending((info), SET_##opt);                   \
                btrfs_clear_pending((info), CLEAR_##opt);               \
@@ -2210,7 +2249,7 @@ do {                                                                   \
 
 #define btrfs_clear_pending_and_info(info, opt, fmt, args...)          \
 do {                                                                   \
-       if (btrfs_raw_test_opt((info)->mount_opt, opt)) {               \
+       if (btrfs_test_opt((info), opt)) {                              \
                btrfs_info((info), fmt, ##args);                        \
                btrfs_set_pending((info), CLEAR_##opt);                 \
                btrfs_clear_pending((info), SET_##opt);                 \
@@ -4016,6 +4055,7 @@ ssize_t btrfs_listxattr(struct dentry *dentry, char *buffer, size_t size);
 /* super.c */
 int btrfs_parse_options(struct btrfs_fs_info *fs_info, char *options);
 int btrfs_sync_fs(struct super_block *sb, int wait);
+void btrfs_mount_opts_init(struct btrfs_mount_opts *dest);
 
 #ifdef CONFIG_PRINTK
 __printf(2, 3)

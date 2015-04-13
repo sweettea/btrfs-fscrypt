@@ -323,7 +323,8 @@ static int btrfs_ioctl_setflags(struct file *file, void __user *arg)
 		ip->flags |= BTRFS_INODE_COMPRESS;
 		ip->flags &= ~BTRFS_INODE_NOCOMPRESS;
 
-		if (root->fs_info->compress_type == BTRFS_COMPRESS_LZO)
+		if (btrfs_get_opt_value(root->fs_info, compress_type) ==
+				BTRFS_COMPRESS_LZO)
 			comp = "lzo";
 		else
 			comp = "zlib";

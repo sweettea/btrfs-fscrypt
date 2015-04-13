@@ -291,8 +291,7 @@ void __btrfs_panic(struct btrfs_fs_info *fs_info, const char *function,
 	vaf.va = &args;
 
 	errstr = btrfs_decode_error(errno);
-	if (fs_info &&
-	    btrfs_raw_test_opt(fs_info->mount_opt, PANIC_ON_FATAL_ERROR))
+	if (fs_info && btrfs_test_opt(fs_info, PANIC_ON_FATAL_ERROR))
 		panic(KERN_CRIT "BTRFS panic (device %s) in %s:%d: %pV (errno=%d %s)\n",
 			s_id, function, line, &vaf, errno, errstr);
 
@@ -472,13 +471,15 @@ int btrfs_parse_options(struct btrfs_fs_info *info, char *options)
 			    token == Opt_compress_force ||
 			    strcmp(args[0].from, "zlib") == 0) {
 				compress_type = "zlib";
-				info->compress_type = BTRFS_COMPRESS_ZLIB;
+				btrfs_set_opt_value(info, compress_type,
+						BTRFS_COMPRESS_ZLIB);
 				btrfs_set_opt(info, COMPRESS);
 				btrfs_clear_opt(info, NODATACOW);
 				btrfs_clear_opt(info, NODATASUM);
 			} else if (strcmp(args[0].from, "lzo") == 0) {
 				compress_type = "lzo";
-				info->compress_type = BTRFS_COMPRESS_LZO;
+				btrfs_set_opt_value(info, compress_type,
+						BTRFS_COMPRESS_LZO);
 				btrfs_set_opt(info, COMPRESS);
 				btrfs_clear_opt(info, NODATACOW);
 				btrfs_clear_opt(info, NODATASUM);
@@ -547,16 +548,17 @@ int btrfs_parse_options(struct btrfs_fs_info *info, char *options)
 		case Opt_max_inline:
 			num = match_strdup(&args[0]);
 			if (num) {
-				info->max_inline = memparse(num, NULL);
+				u64 tmp;
+
+				tmp = memparse(num, NULL);
+				btrfs_set_opt_value(info, max_inline, tmp);
 				kfree(num);
 
-				if (info->max_inline) {
-					info->max_inline = min_t(u64,
-						info->max_inline,
-						root->sectorsize);
+				if (tmp) {
+					tmp = max_t(u64, tmp, root->sectorsize);
+					btrfs_set_opt_value(info, max_inline, tmp);
 				}
-				btrfs_info(root->fs_info, "max_inline at %llu",
-					info->max_inline);
+				btrfs_info(info, "max_inline at %llu", tmp);
 			} else {
 				ret = -ENOMEM;
 				goto out;
@@ -1106,6 +1108,18 @@ int btrfs_sync_fs(struct super_block *sb, int wait)
 	return btrfs_commit_transaction(trans, root);
 }
 
+void btrfs_mount_opts_init(struct btrfs_mount_opts *opts)
+{
+	opts->mount_opt = 0;
+	opts->mount_opt_isset = 0;
+	/*
+	 * In the long term, we'll store the compression type in the super
+	 * block, and it'll be used for per file compression control.
+	 */
+	opts->compress_type = BTRFS_COMPRESS_ZLIB;
+	opts->max_inline = BTRFS_DEFAULT_MAX_INLINE;
+}
+
 static int btrfs_show_options(struct seq_file *seq, struct dentry *dentry)
 {
 	struct btrfs_fs_info *info = btrfs_sb(dentry->d_sb);
@@ -1120,15 +1134,17 @@ static int btrfs_show_options(struct seq_file *seq, struct dentry *dentry)
 		seq_puts(seq, ",nodatacow");
 	if (btrfs_test_opt(info, NOBARRIER))
 		seq_puts(seq, ",nobarrier");
-	if (info->max_inline != BTRFS_DEFAULT_MAX_INLINE)
-		seq_printf(seq, ",max_inline=%llu", info->max_inline);
+	if (btrfs_get_opt_value(info, max_inline) != BTRFS_DEFAULT_MAX_INLINE)
+		seq_printf(seq, ",max_inline=%llu",
+				btrfs_get_opt_value(info, max_inline));
 	if (info->alloc_start != 0)
 		seq_printf(seq, ",alloc_start=%llu", info->alloc_start);
 	if (info->thread_pool_size !=  min_t(unsigned long,
 					     num_online_cpus() + 2, 8))
 		seq_printf(seq, ",thread_pool=%d", info->thread_pool_size);
 	if (btrfs_test_opt(info, COMPRESS)) {
-		if (info->compress_type == BTRFS_COMPRESS_ZLIB)
+		if (btrfs_get_opt_value(info, compress_type)
+				== BTRFS_COMPRESS_ZLIB)
 			compress_type = "zlib";
 		else
 			compress_type = "lzo";
@@ -1562,10 +1578,10 @@ static inline void btrfs_remount_prepare(struct btrfs_fs_info *fs_info)
 }
 
 static inline void btrfs_remount_begin(struct btrfs_fs_info *fs_info,
-				       unsigned long old_opts, int flags)
+		struct btrfs_mount_opts *old_opts, int flags)
 {
-	if (btrfs_raw_test_opt(old_opts, AUTO_DEFRAG) &&
-	    (!btrfs_raw_test_opt(fs_info->mount_opt, AUTO_DEFRAG) ||
+	if (__btrfs_test_opt(old_opts, BTRFS_MOUNT_AUTO_DEFRAG) &&
+	    (!btrfs_test_opt(fs_info, AUTO_DEFRAG) ||
 	     (flags & MS_RDONLY))) {
 		/* wait for any defraggers to finish */
 		wait_event(fs_info->transaction_wait,
@@ -1576,14 +1592,14 @@ static inline void btrfs_remount_begin(struct btrfs_fs_info *fs_info,
 }
 
 static inline void btrfs_remount_cleanup(struct btrfs_fs_info *fs_info,
-					 unsigned long old_opts)
+		struct btrfs_mount_opts *old_opts)
 {
 	/*
 	 * We need cleanup all defragable inodes if the autodefragment is
 	 * close or the fs is R/O.
 	 */
-	if (btrfs_raw_test_opt(old_opts, AUTO_DEFRAG) &&
-	    (!btrfs_raw_test_opt(fs_info->mount_opt, AUTO_DEFRAG) ||
+	if (__btrfs_test_opt(old_opts, BTRFS_MOUNT_AUTO_DEFRAG) &&
+	    (!btrfs_test_opt(fs_info, AUTO_DEFRAG) ||
 	     (fs_info->sb->s_flags & MS_RDONLY))) {
 		btrfs_cleanup_defrag_inodes(fs_info);
 	}
@@ -1596,9 +1612,7 @@ static int btrfs_remount(struct super_block *sb, int *flags, char *data)
 	struct btrfs_fs_info *fs_info = btrfs_sb(sb);
 	struct btrfs_root *root = fs_info->tree_root;
 	unsigned old_flags = sb->s_flags;
-	unsigned long old_opts = fs_info->mount_opt;
-	unsigned long old_compress_type = fs_info->compress_type;
-	u64 old_max_inline = fs_info->max_inline;
+	struct btrfs_mount_opts old_opts = fs_info->mount_opts;
 	u64 old_alloc_start = fs_info->alloc_start;
 	int old_thread_pool_size = fs_info->thread_pool_size;
 	unsigned int old_metadata_ratio = fs_info->metadata_ratio;
@@ -1628,7 +1642,7 @@ static int btrfs_remount(struct super_block *sb, int *flags, char *data)
 		goto restore;
 	}
 
-	btrfs_remount_begin(fs_info, old_opts, *flags);
+	btrfs_remount_begin(fs_info, &old_opts, *flags);
 	btrfs_resize_thread_pool(fs_info,
 		fs_info->thread_pool_size, old_thread_pool_size);
 
@@ -1715,7 +1729,7 @@ static int btrfs_remount(struct super_block *sb, int *flags, char *data)
 	}
 out:
 	wake_up_process(fs_info->transaction_kthread);
-	btrfs_remount_cleanup(fs_info, old_opts);
+	btrfs_remount_cleanup(fs_info, &old_opts);
 	return 0;
 
 restore:
@@ -1723,16 +1737,14 @@ restore:
 	if (sb->s_flags & MS_RDONLY)
 		old_flags |= MS_RDONLY;
 	sb->s_flags = old_flags;
-	fs_info->mount_opt = old_opts;
-	fs_info->compress_type = old_compress_type;
-	fs_info->max_inline = old_max_inline;
+	fs_info->mount_opts = old_opts;
 	mutex_lock(&fs_info->chunk_mutex);
 	fs_info->alloc_start = old_alloc_start;
 	mutex_unlock(&fs_info->chunk_mutex);
 	btrfs_resize_thread_pool(fs_info,
 		old_thread_pool_size, fs_info->thread_pool_size);
 	fs_info->metadata_ratio = old_metadata_ratio;
-	btrfs_remount_cleanup(fs_info, old_opts);
+	btrfs_remount_cleanup(fs_info, &old_opts);
 	return ret;
 }
 
