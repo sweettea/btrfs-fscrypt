@@ -2971,7 +2971,7 @@ retry_root_backup:
 	    !fs_info->fs_devices->rotating) {
 		printk(KERN_INFO "BTRFS: detected SSD devices, enabling SSD "
 		       "mode\n");
-		btrfs_set_opt(fs_info->mount_opt, SSD);
+		btrfs_set_opt(fs_info, SSD);
 	}
 
 	/*
@@ -3152,7 +3152,7 @@ recovery_tree_root:
 	btrfs_set_super_log_root(disk_super, 0);
 
 	/* we can't trust the free space cache either */
-	btrfs_set_opt(fs_info->mount_opt, CLEAR_CACHE);
+	btrfs_set_opt(fs_info, CLEAR_CACHE);
 
 	ret = next_root_backup(fs_info, fs_info->super_copy,
 			       &num_backups_tried, &backup_index);

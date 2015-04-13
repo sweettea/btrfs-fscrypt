@@ -2225,12 +2225,12 @@ void btrfs_apply_pending_changes(struct btrfs_fs_info *fs_info)
 
 	bit = 1 << BTRFS_PENDING_SET_INODE_MAP_CACHE;
 	if (prev & bit)
-		btrfs_set_opt(fs_info->mount_opt, INODE_MAP_CACHE);
+		btrfs_set_opt(fs_info, INODE_MAP_CACHE);
 	prev &= ~bit;
 
 	bit = 1 << BTRFS_PENDING_CLEAR_INODE_MAP_CACHE;
 	if (prev & bit)
-		btrfs_clear_opt(fs_info->mount_opt, INODE_MAP_CACHE);
+		btrfs_clear_opt(fs_info, INODE_MAP_CACHE);
 	prev &= ~bit;
 
 	bit = 1 << BTRFS_PENDING_COMMIT;

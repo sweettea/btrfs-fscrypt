@@ -2155,8 +2155,8 @@ struct btrfs_ioctl_defrag_range_args {
 #define BTRFS_DEFAULT_COMMIT_INTERVAL	(30)
 #define BTRFS_DEFAULT_MAX_INLINE	(8192)
 
-#define btrfs_clear_opt(o, opt)		((o) &= ~BTRFS_MOUNT_##opt)
-#define btrfs_set_opt(o, opt)		((o) |= BTRFS_MOUNT_##opt)
+#define btrfs_clear_opt(o, opt)		((o)->mount_opt &= ~BTRFS_MOUNT_##opt)
+#define btrfs_set_opt(o, opt)		((o)->mount_opt |= BTRFS_MOUNT_##opt)
 #define btrfs_raw_test_opt(o, opt)	((o) & BTRFS_MOUNT_##opt)
 #define btrfs_test_opt(root, opt)	((root)->fs_info->mount_opt & \
 					 BTRFS_MOUNT_##opt)
@@ -2165,14 +2165,14 @@ struct btrfs_ioctl_defrag_range_args {
 {									\
 	if (!btrfs_test_opt(root, opt))					\
 		btrfs_info(root->fs_info, fmt, ##args);			\
-	btrfs_set_opt(root->fs_info->mount_opt, opt);			\
+	btrfs_set_opt(root->fs_info, opt);				\
 }
 
 #define btrfs_clear_and_info(root, opt, fmt, args...)			\
 {									\
 	if (btrfs_test_opt(root, opt))					\
 		btrfs_info(root->fs_info, fmt, ##args);			\
-	btrfs_clear_opt(root->fs_info->mount_opt, opt);			\
+	btrfs_clear_opt(root->fs_info, opt);				\
 }
 
 /*

@@ -393,7 +393,7 @@ int btrfs_parse_options(struct btrfs_root *root, char *options)
 
 	cache_gen = btrfs_super_cache_generation(root->fs_info->super_copy);
 	if (cache_gen)
-		btrfs_set_opt(info->mount_opt, SPACE_CACHE);
+		btrfs_set_opt(info, SPACE_CACHE);
 
 	if (!options)
 		goto out;
@@ -417,7 +417,7 @@ int btrfs_parse_options(struct btrfs_root *root, char *options)
 		switch (token) {
 		case Opt_degraded:
 			btrfs_info(root->fs_info, "allowing degraded mounts");
-			btrfs_set_opt(info->mount_opt, DEGRADED);
+			btrfs_set_opt(info, DEGRADED);
 			break;
 		case Opt_subvol:
 		case Opt_subvolid:
@@ -439,8 +439,8 @@ int btrfs_parse_options(struct btrfs_root *root, char *options)
 				else
 					btrfs_info(root->fs_info, "setting datasum");
 			}
-			btrfs_clear_opt(info->mount_opt, NODATACOW);
-			btrfs_clear_opt(info->mount_opt, NODATASUM);
+			btrfs_clear_opt(info, NODATACOW);
+			btrfs_clear_opt(info, NODATASUM);
 			break;
 		case Opt_nodatacow:
 			if (!btrfs_test_opt(root, NODATACOW)) {
@@ -452,10 +452,10 @@ int btrfs_parse_options(struct btrfs_root *root, char *options)
 					btrfs_info(root->fs_info, "setting nodatacow");
 				}
 			}
-			btrfs_clear_opt(info->mount_opt, COMPRESS);
-			btrfs_clear_opt(info->mount_opt, FORCE_COMPRESS);
-			btrfs_set_opt(info->mount_opt, NODATACOW);
-			btrfs_set_opt(info->mount_opt, NODATASUM);
+			btrfs_clear_opt(info, COMPRESS);
+			btrfs_clear_opt(info, FORCE_COMPRESS);
+			btrfs_set_opt(info, NODATACOW);
+			btrfs_set_opt(info, NODATASUM);
 			break;
 		case Opt_datacow:
 			btrfs_clear_and_info(root, NODATACOW,
@@ -472,20 +472,20 @@ int btrfs_parse_options(struct btrfs_root *root, char *options)
 			    strcmp(args[0].from, "zlib") == 0) {
 				compress_type = "zlib";
 				info->compress_type = BTRFS_COMPRESS_ZLIB;
-				btrfs_set_opt(info->mount_opt, COMPRESS);
-				btrfs_clear_opt(info->mount_opt, NODATACOW);
-				btrfs_clear_opt(info->mount_opt, NODATASUM);
+				btrfs_set_opt(info, COMPRESS);
+				btrfs_clear_opt(info, NODATACOW);
+				btrfs_clear_opt(info, NODATASUM);
 			} else if (strcmp(args[0].from, "lzo") == 0) {
 				compress_type = "lzo";
 				info->compress_type = BTRFS_COMPRESS_LZO;
-				btrfs_set_opt(info->mount_opt, COMPRESS);
-				btrfs_clear_opt(info->mount_opt, NODATACOW);
-				btrfs_clear_opt(info->mount_opt, NODATASUM);
+				btrfs_set_opt(info, COMPRESS);
+				btrfs_clear_opt(info, NODATACOW);
+				btrfs_clear_opt(info, NODATASUM);
 				btrfs_set_fs_incompat(info, COMPRESS_LZO);
 			} else if (strncmp(args[0].from, "no", 2) == 0) {
 				compress_type = "no";
-				btrfs_clear_opt(info->mount_opt, COMPRESS);
-				btrfs_clear_opt(info->mount_opt, FORCE_COMPRESS);
+				btrfs_clear_opt(info, COMPRESS);
+				btrfs_clear_opt(info, FORCE_COMPRESS);
 				compress_force = false;
 			} else {
 				ret = -EINVAL;
@@ -507,7 +507,7 @@ int btrfs_parse_options(struct btrfs_root *root, char *options)
 				 * flag, otherwise, there is no way for users
 				 * to disable forcible compression separately.
 				 */
-				btrfs_clear_opt(info->mount_opt, FORCE_COMPRESS);
+				btrfs_clear_opt(info, FORCE_COMPRESS);
 			}
 			break;
 		case Opt_ssd:
@@ -517,12 +517,12 @@ int btrfs_parse_options(struct btrfs_root *root, char *options)
 		case Opt_ssd_spread:
 			btrfs_set_and_info(root, SSD_SPREAD,
 					   "use spread ssd allocation scheme");
-			btrfs_set_opt(info->mount_opt, SSD);
+			btrfs_set_opt(info, SSD);
 			break;
 		case Opt_nossd:
 			btrfs_set_and_info(root, NOSSD,
 					     "not using ssd allocation scheme");
-			btrfs_clear_opt(info->mount_opt, SSD);
+			btrfs_clear_opt(info, SSD);
 			break;
 		case Opt_barrier:
 			btrfs_clear_and_info(root, NOBARRIER,
@@ -630,7 +630,7 @@ int btrfs_parse_options(struct btrfs_root *root, char *options)
 					   "enabling disk space caching");
 			break;
 		case Opt_rescan_uuid_tree:
-			btrfs_set_opt(info->mount_opt, RESCAN_UUID_TREE);
+			btrfs_set_opt(info, RESCAN_UUID_TREE);
 			break;
 		case Opt_no_space_cache:
 			btrfs_clear_and_info(root, SPACE_CACHE,
@@ -649,13 +649,13 @@ int btrfs_parse_options(struct btrfs_root *root, char *options)
 					   "force clearing of disk cache");
 			break;
 		case Opt_user_subvol_rm_allowed:
-			btrfs_set_opt(info->mount_opt, USER_SUBVOL_RM_ALLOWED);
+			btrfs_set_opt(info, USER_SUBVOL_RM_ALLOWED);
 			break;
 		case Opt_enospc_debug:
-			btrfs_set_opt(info->mount_opt, ENOSPC_DEBUG);
+			btrfs_set_opt(info, ENOSPC_DEBUG);
 			break;
 		case Opt_noenospc_debug:
-			btrfs_clear_opt(info->mount_opt, ENOSPC_DEBUG);
+			btrfs_clear_opt(info, ENOSPC_DEBUG);
 			break;
 		case Opt_defrag:
 			btrfs_set_and_info(root, AUTO_DEFRAG,
@@ -667,22 +667,22 @@ int btrfs_parse_options(struct btrfs_root *root, char *options)
 			break;
 		case Opt_recovery:
 			btrfs_info(root->fs_info, "enabling auto recovery");
-			btrfs_set_opt(info->mount_opt, RECOVERY);
+			btrfs_set_opt(info, RECOVERY);
 			break;
 		case Opt_skip_balance:
-			btrfs_set_opt(info->mount_opt, SKIP_BALANCE);
+			btrfs_set_opt(info, SKIP_BALANCE);
 			break;
 #ifdef CONFIG_BTRFS_FS_CHECK_INTEGRITY
 		case Opt_check_integrity_including_extent_data:
 			btrfs_info(root->fs_info,
 				   "enabling check integrity including extent data");
-			btrfs_set_opt(info->mount_opt,
+			btrfs_set_opt(info,
 				      CHECK_INTEGRITY_INCLUDING_EXTENT_DATA);
-			btrfs_set_opt(info->mount_opt, CHECK_INTEGRITY);
+			btrfs_set_opt(info, CHECK_INTEGRITY);
 			break;
 		case Opt_check_integrity:
 			btrfs_info(root->fs_info, "enabling check integrity");
-			btrfs_set_opt(info->mount_opt, CHECK_INTEGRITY);
+			btrfs_set_opt(info, CHECK_INTEGRITY);
 			break;
 		case Opt_check_integrity_print_mask:
 			ret = match_int(&args[0], &intarg);
@@ -708,11 +708,9 @@ int btrfs_parse_options(struct btrfs_root *root, char *options)
 #endif
 		case Opt_fatal_errors:
 			if (strcmp(args[0].from, "panic") == 0)
-				btrfs_set_opt(info->mount_opt,
-					      PANIC_ON_FATAL_ERROR);
+				btrfs_set_opt(info, PANIC_ON_FATAL_ERROR);
 			else if (strcmp(args[0].from, "bug") == 0)
-				btrfs_clear_opt(info->mount_opt,
-					      PANIC_ON_FATAL_ERROR);
+				btrfs_clear_opt(info, PANIC_ON_FATAL_ERROR);
 			else {
 				ret = -EINVAL;
 				goto out;
