@@ -587,7 +587,7 @@ static int cache_block_group(struct btrfs_block_group_cache *cache,
 	cache->cached = BTRFS_CACHE_FAST;
 	spin_unlock(&cache->lock);
 
-	if (btrfs_test_opt(fs_info, SPACE_CACHE)) {
+	if (btrfs_test_fs_opt(fs_info, SPACE_CACHE)) {
 		mutex_lock(&caching_ctl->mutex);
 		ret = load_free_space_cache(fs_info, cache);
 
@@ -3255,7 +3255,7 @@ again:
 
 	spin_lock(&block_group->lock);
 	if (block_group->cached != BTRFS_CACHE_FINISHED ||
-	    !btrfs_test_opt(root->fs_info, SPACE_CACHE) ||
+	    !btrfs_test_fs_opt(root->fs_info, SPACE_CACHE) ||
 		/*
 		 * don't bother trying to write stuff out _if_
 		 * a) we're not cached,
@@ -3313,7 +3313,7 @@ int btrfs_setup_space_cache(struct btrfs_trans_handle *trans,
 	struct btrfs_path *path;
 
 	if (list_empty(&cur_trans->dirty_bgs) ||
-	    !btrfs_test_opt(root->fs_info, SPACE_CACHE))
+	    !btrfs_test_fs_opt(root->fs_info, SPACE_CACHE))
 		return 0;
 
 	path = btrfs_alloc_path();
@@ -4098,7 +4098,7 @@ void check_system_chunk(struct btrfs_trans_handle *trans,
 	thresh = btrfs_calc_trunc_metadata_size(root, num_devs) +
 		btrfs_calc_trans_metadata_size(root, 1);
 
-	if (left < thresh && btrfs_test_opt(root->fs_info, ENOSPC_DEBUG)) {
+	if (left < thresh && btrfs_test_fs_opt(root->fs_info, ENOSPC_DEBUG)) {
 		btrfs_info(root->fs_info, "left=%llu, need=%llu, flags=%llu",
 			left, thresh, type);
 		dump_space_info(info, 0, 0);
@@ -5680,7 +5680,7 @@ static int update_block_group(struct btrfs_trans_handle *trans,
 		spin_lock(&cache->space_info->lock);
 		spin_lock(&cache->lock);
 
-		if (btrfs_test_opt(info, SPACE_CACHE) &&
+		if (btrfs_test_fs_opt(info, SPACE_CACHE) &&
 		    cache->disk_cache_state < BTRFS_DC_CLEAR)
 			cache->disk_cache_state = BTRFS_DC_CLEAR;
 
@@ -6084,7 +6084,7 @@ int btrfs_finish_extent_commit(struct btrfs_trans_handle *trans,
 			break;
 		}
 
-		if (btrfs_test_opt(fs_info, DISCARD))
+		if (btrfs_test_fs_opt(fs_info, DISCARD))
 			ret = btrfs_discard_extent(root, start,
 						   end + 1 - start, NULL);
 
@@ -6770,12 +6770,12 @@ static noinline int find_free_extent(struct btrfs_root *orig_root,
 
 	if (flags & BTRFS_BLOCK_GROUP_METADATA && use_cluster) {
 		last_ptr = &root->fs_info->meta_alloc_cluster;
-		if (!btrfs_test_opt(root->fs_info, SSD))
+		if (!btrfs_test_fs_opt(root->fs_info, SSD))
 			empty_cluster = 64 * 1024;
 	}
 
 	if ((flags & BTRFS_BLOCK_GROUP_DATA) && use_cluster &&
-	    btrfs_test_opt(root->fs_info, SSD)) {
+	    btrfs_test_fs_opt(root->fs_info, SSD)) {
 		last_ptr = &root->fs_info->data_alloc_cluster;
 	}
 
@@ -7202,7 +7202,7 @@ again:
 			if (num_bytes == min_alloc_size)
 				final_tried = true;
 			goto again;
-		} else if (btrfs_test_opt(root->fs_info, ENOSPC_DEBUG)) {
+		} else if (btrfs_test_fs_opt(root->fs_info, ENOSPC_DEBUG)) {
 			struct btrfs_space_info *sinfo;
 
 			sinfo = __find_space_info(root->fs_info, flags);
@@ -7531,7 +7531,7 @@ again:
 		goto again;
 	}
 
-	if (btrfs_test_opt(root->fs_info, ENOSPC_DEBUG)) {
+	if (btrfs_test_fs_opt(root->fs_info, ENOSPC_DEBUG)) {
 		static DEFINE_RATELIMIT_STATE(_rs,
 				DEFAULT_RATELIMIT_INTERVAL * 10,
 				/*DEFAULT_RATELIMIT_BURST*/ 1);
@@ -9187,7 +9187,7 @@ int btrfs_free_block_groups(struct btrfs_fs_info *info)
 		space_info = list_entry(info->space_info.next,
 					struct btrfs_space_info,
 					list);
-		if (btrfs_test_opt(info, ENOSPC_DEBUG)) {
+		if (btrfs_test_fs_opt(info, ENOSPC_DEBUG)) {
 			if (WARN_ON(space_info->bytes_pinned > 0 ||
 			    space_info->bytes_reserved > 0 ||
 			    space_info->bytes_may_use > 0)) {
@@ -9308,10 +9308,10 @@ int btrfs_read_block_groups(struct btrfs_root *root)
 	path->reada = 1;
 
 	cache_gen = btrfs_super_cache_generation(root->fs_info->super_copy);
-	if (btrfs_test_opt(info, SPACE_CACHE) &&
+	if (btrfs_test_fs_opt(info, SPACE_CACHE) &&
 	    btrfs_super_generation(root->fs_info->super_copy) != cache_gen)
 		need_clear = 1;
-	if (btrfs_test_opt(info, CLEAR_CACHE))
+	if (btrfs_test_fs_opt(info, CLEAR_CACHE))
 		need_clear = 1;
 
 	while (1) {
@@ -9342,7 +9342,7 @@ int btrfs_read_block_groups(struct btrfs_root *root)
 			 * b) Setting 'dirty flag' makes sure that we flush
 			 *    the new space cache info onto disk.
 			 */
-			if (btrfs_test_opt(info, SPACE_CACHE))
+			if (btrfs_test_fs_opt(info, SPACE_CACHE))
 				cache->disk_cache_state = BTRFS_DC_CLEAR;
 		}
 

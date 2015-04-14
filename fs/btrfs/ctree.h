@@ -2207,7 +2207,27 @@ static inline bool __btrfs_test_opt(struct btrfs_mount_opts *opts, unsigned opt)
 	return (opts->mount_opt_isset & opt) && (opts->mount_opt & opt);
 }
 
-#define btrfs_get_opt_value(owner, item)	((owner)->mount_opts.item)
+#define btrfs_test_fs_opt(info, opt)   __btrfs_test_fs_opt((info), BTRFS_MOUNT_##opt)
+static inline bool __btrfs_test_fs_opt(struct btrfs_fs_info *info, unsigned long opt)
+{
+	return __btrfs_test_opt(&info->mount_opts, opt);
+}
+
+#define btrfs_test_root_opt(root, opt) __btrfs_test_root_opt((root), BTRFS_MOUNT_##opt)
+static inline bool __btrfs_test_root_opt(struct btrfs_root *root, unsigned long opt)
+{
+       if (!(opt & BTRFS_PER_SUBVOLUME_OPTIONS_MASK))
+               return __btrfs_test_opt(&root->fs_info->mount_opts, opt);
+
+       return __btrfs_test_opt(&root->mount_opts, opt);
+}
+
+#define btrfs_get_opt_value(owner, item)	({			\
+	struct btrfs_root *__root = (owner);				\
+	__root->mount_opts.mount_opt_isset & BTRFS_PER_SUBVOLUME_OPTIONS_MASK \
+	? __root->mount_opts.item					\
+	: __root->fs_info->mount_opts.item; })
+
 #define btrfs_set_opt_value(owner, item, value)				\
 	((owner)->mount_opts.item = (value))
 

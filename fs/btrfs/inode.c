@@ -262,7 +262,7 @@ static noinline int cow_file_range_inline(struct btrfs_root *root,
 	    (!compressed_size &&
 	    (actual_end & (root->sectorsize - 1)) == 0) ||
 	    end + 1 < isize ||
-	    data_len > btrfs_get_opt_value(root->fs_info, max_inline)) {
+	    data_len > btrfs_get_opt_value(root, max_inline)) {
 		return 1;
 	}
 
@@ -361,12 +361,12 @@ static inline int inode_need_compress(struct inode *inode)
 	struct btrfs_root *root = BTRFS_I(inode)->root;
 
 	/* force compress */
-	if (btrfs_test_opt(root->fs_info, FORCE_COMPRESS))
+	if (btrfs_test_root_opt(root, FORCE_COMPRESS))
 		return 1;
 	/* bad compression ratios */
 	if (BTRFS_I(inode)->flags & BTRFS_INODE_NOCOMPRESS)
 		return 0;
-	if (btrfs_test_opt(root->fs_info, COMPRESS) ||
+	if (btrfs_test_root_opt(root, COMPRESS) ||
 	    BTRFS_I(inode)->flags & BTRFS_INODE_COMPRESS ||
 	    BTRFS_I(inode)->force_compress)
 		return 1;
@@ -411,7 +411,7 @@ static noinline void compress_file_range(struct inode *inode,
 	unsigned long max_uncompressed = 128 * 1024;
 	int i;
 	int will_compress;
-	int compress_type = btrfs_get_opt_value(root->fs_info, compress_type);
+	int compress_type = btrfs_get_opt_value(root, compress_type);
 	int redirty = 0;
 
 	/* if this is a small write inside eof, kick off a defrag */
@@ -589,7 +589,7 @@ cont:
 		nr_pages_ret = 0;
 
 		/* flag the file so we don't compress in the future */
-		if (!btrfs_test_opt(root->fs_info, FORCE_COMPRESS) &&
+		if (!btrfs_test_root_opt(root, FORCE_COMPRESS) &&
 		    !(BTRFS_I(inode)->force_compress)) {
 			BTRFS_I(inode)->flags |= BTRFS_INODE_NOCOMPRESS;
 		}
@@ -1135,7 +1135,7 @@ static int cow_file_range_async(struct inode *inode, struct page *locked_page,
 		async_cow->start = start;
 
 		if (BTRFS_I(inode)->flags & BTRFS_INODE_NOCOMPRESS &&
-		    !btrfs_test_opt(root->fs_info, FORCE_COMPRESS))
+		    !btrfs_test_root_opt(root, FORCE_COMPRESS))
 			cur_end = end;
 		else
 			cur_end = min(end, start + 512 * 1024 - 1);
@@ -6100,9 +6100,9 @@ static struct inode *btrfs_new_inode(struct btrfs_trans_handle *trans,
 	btrfs_inherit_iflags(inode, dir);
 
 	if (S_ISREG(mode)) {
-		if (btrfs_test_opt(root->fs_info, NODATASUM))
+		if (btrfs_test_root_opt(root, NODATASUM))
 			BTRFS_I(inode)->flags |= BTRFS_INODE_NODATASUM;
-		if (btrfs_test_opt(root->fs_info, NODATACOW))
+		if (btrfs_test_root_opt(root, NODATACOW))
 			BTRFS_I(inode)->flags |= BTRFS_INODE_NODATACOW |
 				BTRFS_INODE_NODATASUM;
 	}

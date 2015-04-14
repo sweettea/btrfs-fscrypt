@@ -323,7 +323,7 @@ static int btrfs_ioctl_setflags(struct file *file, void __user *arg)
 		ip->flags |= BTRFS_INODE_COMPRESS;
 		ip->flags &= ~BTRFS_INODE_NOCOMPRESS;
 
-		if (btrfs_get_opt_value(root->fs_info, compress_type) ==
+		if (btrfs_get_opt_value(root, compress_type) ==
 				BTRFS_COMPRESS_LZO)
 			comp = "lzo";
 		else
@@ -2376,7 +2376,7 @@ static noinline int btrfs_ioctl_snap_destroy(struct file *file,
 		 * rmdir(2).
 		 */
 		err = -EPERM;
-		if (!btrfs_test_opt(root->fs_info, USER_SUBVOL_RM_ALLOWED))
+		if (!btrfs_test_fs_opt(root->fs_info, USER_SUBVOL_RM_ALLOWED))
 			goto out_dput;
 
 		/*

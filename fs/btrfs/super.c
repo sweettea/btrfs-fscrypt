@@ -291,7 +291,7 @@ void __btrfs_panic(struct btrfs_fs_info *fs_info, const char *function,
 	vaf.va = &args;
 
 	errstr = btrfs_decode_error(errno);
-	if (fs_info && btrfs_test_opt(fs_info, PANIC_ON_FATAL_ERROR))
+	if (fs_info && btrfs_test_fs_opt(fs_info, PANIC_ON_FATAL_ERROR))
 		panic(KERN_CRIT "BTRFS panic (device %s) in %s:%d: %pV (errno=%d %s)\n",
 			s_id, function, line, &vaf, errno, errstr);
 
@@ -377,16 +377,16 @@ static match_table_t tokens = {
 
 #define btrfs_set_and_info(info, opt, fmt, args...)			\
 do {									\
-	if (!btrfs_test_opt((info), opt))				\
+	if (!btrfs_test_opt((info)->tree_root, opt))			\
 		btrfs_info((info), fmt, ##args);			\
-	btrfs_set_opt((info), opt);					\
+	btrfs_set_opt((info)->tree_root, opt);				\
 } while(0)
 
 #define btrfs_clear_and_info(info, opt, fmt, args...)			\
 do {									\
-	if (btrfs_test_opt((info), opt))				\
+	if (btrfs_test_opt((info)->tree_root, opt))			\
 		btrfs_info((info), fmt, ##args);			\
-	btrfs_clear_opt((info), opt);					\
+	btrfs_clear_opt((info)->tree_root, opt);			\
 } while(0)
 
 /*
@@ -447,29 +447,29 @@ int btrfs_parse_options(struct btrfs_fs_info *info, char *options)
 					   "setting nodatasum");
 			break;
 		case Opt_datasum:
-			if (btrfs_test_opt(info, NODATASUM)) {
-				if (btrfs_test_opt(info, NODATACOW))
+			if (btrfs_test_root_opt(root, NODATASUM)) {
+				if (btrfs_test_root_opt(root, NODATACOW))
 					btrfs_info(root->fs_info, "setting datasum, datacow enabled");
 				else
 					btrfs_info(root->fs_info, "setting datasum");
 			}
-			btrfs_clear_opt(info, NODATACOW);
-			btrfs_clear_opt(info, NODATASUM);
+			btrfs_clear_opt(root, NODATACOW);
+			btrfs_clear_opt(root, NODATASUM);
 			break;
 		case Opt_nodatacow:
-			if (!btrfs_test_opt(info, NODATACOW)) {
-				if (!btrfs_test_opt(info, COMPRESS) ||
-				    !btrfs_test_opt(info, FORCE_COMPRESS)) {
+			if (!btrfs_test_root_opt(root, NODATACOW)) {
+				if (!btrfs_test_root_opt(root, COMPRESS) ||
+				    !btrfs_test_root_opt(root, FORCE_COMPRESS)) {
 					btrfs_info(root->fs_info,
 						   "setting nodatacow, compression disabled");
 				} else {
 					btrfs_info(root->fs_info, "setting nodatacow");
 				}
 			}
-			btrfs_clear_opt(info, COMPRESS);
-			btrfs_clear_opt(info, FORCE_COMPRESS);
-			btrfs_set_opt(info, NODATACOW);
-			btrfs_set_opt(info, NODATASUM);
+			btrfs_clear_opt(root, COMPRESS);
+			btrfs_clear_opt(root, FORCE_COMPRESS);
+			btrfs_set_opt(root, NODATACOW);
+			btrfs_set_opt(root, NODATASUM);
 			break;
 		case Opt_datacow:
 			btrfs_clear_and_info(info, NODATACOW,
@@ -485,23 +485,23 @@ int btrfs_parse_options(struct btrfs_fs_info *info, char *options)
 			    token == Opt_compress_force ||
 			    strcmp(args[0].from, "zlib") == 0) {
 				compress_type = "zlib";
-				btrfs_set_opt_value(info, compress_type,
+				btrfs_set_opt_value(root, compress_type,
 						BTRFS_COMPRESS_ZLIB);
-				btrfs_set_opt(info, COMPRESS);
-				btrfs_clear_opt(info, NODATACOW);
-				btrfs_clear_opt(info, NODATASUM);
+				btrfs_set_opt(root, COMPRESS);
+				btrfs_clear_opt(root, NODATACOW);
+				btrfs_clear_opt(root, NODATASUM);
 			} else if (strcmp(args[0].from, "lzo") == 0) {
 				compress_type = "lzo";
-				btrfs_set_opt_value(info, compress_type,
+				btrfs_set_opt_value(root, compress_type,
 						BTRFS_COMPRESS_LZO);
-				btrfs_set_opt(info, COMPRESS);
-				btrfs_clear_opt(info, NODATACOW);
-				btrfs_clear_opt(info, NODATASUM);
+				btrfs_set_opt(root, COMPRESS);
+				btrfs_clear_opt(root, NODATACOW);
+				btrfs_clear_opt(root, NODATASUM);
 				btrfs_set_fs_incompat(info, COMPRESS_LZO);
 			} else if (strncmp(args[0].from, "no", 2) == 0) {
 				compress_type = "no";
-				btrfs_clear_opt(info, COMPRESS);
-				btrfs_clear_opt(info, FORCE_COMPRESS);
+				btrfs_clear_opt(root, COMPRESS);
+				btrfs_clear_opt(root, FORCE_COMPRESS);
 				compress_force = false;
 			} else {
 				ret = -EINVAL;
@@ -513,7 +513,7 @@ int btrfs_parse_options(struct btrfs_fs_info *info, char *options)
 						   "force %s compression",
 						   compress_type);
 			} else {
-				if (!btrfs_test_opt(info, COMPRESS))
+				if (!btrfs_test_root_opt(root, COMPRESS))
 					btrfs_info(root->fs_info,
 						   "btrfs: use %s compression",
 						   compress_type);
@@ -523,7 +523,7 @@ int btrfs_parse_options(struct btrfs_fs_info *info, char *options)
 				 * flag, otherwise, there is no way for users
 				 * to disable forcible compression separately.
 				 */
-				btrfs_clear_opt(info, FORCE_COMPRESS);
+				btrfs_clear_opt(root, FORCE_COMPRESS);
 			}
 			break;
 		case Opt_ssd:
@@ -762,7 +762,7 @@ int btrfs_parse_options(struct btrfs_fs_info *info, char *options)
 		}
 	}
 out:
-	if (!ret && btrfs_test_opt(info, SPACE_CACHE))
+	if (!ret && btrfs_test_fs_opt(info, SPACE_CACHE))
 		btrfs_info(root->fs_info, "disk space caching is enabled");
 	kfree(orig);
 	return ret;
@@ -1164,74 +1164,74 @@ void btrfs_mount_opts_apply(struct btrfs_mount_opts *dest,
 static int btrfs_show_options(struct seq_file *seq, struct dentry *dentry)
 {
 	struct btrfs_fs_info *info = btrfs_sb(dentry->d_sb);
-	struct btrfs_root *root = info->tree_root;
+	struct btrfs_root *root = BTRFS_I(dentry->d_inode)->root;
 	char *compress_type;
 
-	if (btrfs_test_opt(info, DEGRADED))
+	if (btrfs_test_fs_opt(info, DEGRADED))
 		seq_puts(seq, ",degraded");
-	if (btrfs_test_opt(info, NODATASUM))
+	if (btrfs_test_root_opt(root, NODATASUM))
 		seq_puts(seq, ",nodatasum");
-	if (btrfs_test_opt(info, NODATACOW))
+	if (btrfs_test_root_opt(root, NODATACOW))
 		seq_puts(seq, ",nodatacow");
-	if (btrfs_test_opt(info, NOBARRIER))
+	if (btrfs_test_fs_opt(info, NOBARRIER))
 		seq_puts(seq, ",nobarrier");
-	if (btrfs_get_opt_value(info, max_inline) != BTRFS_DEFAULT_MAX_INLINE)
+	if (btrfs_get_opt_value(root, max_inline) != BTRFS_DEFAULT_MAX_INLINE)
 		seq_printf(seq, ",max_inline=%llu",
-				btrfs_get_opt_value(info, max_inline));
+				btrfs_get_opt_value(root, max_inline));
 	if (info->alloc_start != 0)
 		seq_printf(seq, ",alloc_start=%llu", info->alloc_start);
 	if (info->thread_pool_size !=  min_t(unsigned long,
 					     num_online_cpus() + 2, 8))
 		seq_printf(seq, ",thread_pool=%d", info->thread_pool_size);
-	if (btrfs_test_opt(info, COMPRESS)) {
-		if (btrfs_get_opt_value(info, compress_type)
+	if (btrfs_test_root_opt(root, COMPRESS)) {
+		if (btrfs_get_opt_value(root, compress_type)
 				== BTRFS_COMPRESS_ZLIB)
 			compress_type = "zlib";
 		else
 			compress_type = "lzo";
-		if (btrfs_test_opt(info, FORCE_COMPRESS))
+		if (btrfs_test_root_opt(root, FORCE_COMPRESS))
 			seq_printf(seq, ",compress-force=%s", compress_type);
 		else
 			seq_printf(seq, ",compress=%s", compress_type);
 	}
-	if (btrfs_test_opt(info, NOSSD))
+	if (btrfs_test_fs_opt(info, NOSSD))
 		seq_puts(seq, ",nossd");
-	if (btrfs_test_opt(info, SSD_SPREAD))
+	if (btrfs_test_fs_opt(info, SSD_SPREAD))
 		seq_puts(seq, ",ssd_spread");
-	else if (btrfs_test_opt(info, SSD))
+	else if (btrfs_test_fs_opt(info, SSD))
 		seq_puts(seq, ",ssd");
-	if (btrfs_test_opt(info, NOTREELOG))
+	if (btrfs_test_fs_opt(info, NOTREELOG))
 		seq_puts(seq, ",notreelog");
-	if (btrfs_test_opt(info, FLUSHONCOMMIT))
+	if (btrfs_test_fs_opt(info, FLUSHONCOMMIT))
 		seq_puts(seq, ",flushoncommit");
-	if (btrfs_test_opt(info, DISCARD))
+	if (btrfs_test_fs_opt(info, DISCARD))
 		seq_puts(seq, ",discard");
 	if (!(root->fs_info->sb->s_flags & MS_POSIXACL))
 		seq_puts(seq, ",noacl");
-	if (btrfs_test_opt(info, SPACE_CACHE))
+	if (btrfs_test_fs_opt(info, SPACE_CACHE))
 		seq_puts(seq, ",space_cache");
 	else
 		seq_puts(seq, ",nospace_cache");
-	if (btrfs_test_opt(info, RESCAN_UUID_TREE))
+	if (btrfs_test_fs_opt(info, RESCAN_UUID_TREE))
 		seq_puts(seq, ",rescan_uuid_tree");
-	if (btrfs_test_opt(info, CLEAR_CACHE))
+	if (btrfs_test_fs_opt(info, CLEAR_CACHE))
 		seq_puts(seq, ",clear_cache");
-	if (btrfs_test_opt(info, USER_SUBVOL_RM_ALLOWED))
+	if (btrfs_test_fs_opt(info, USER_SUBVOL_RM_ALLOWED))
 		seq_puts(seq, ",user_subvol_rm_allowed");
-	if (btrfs_test_opt(info, ENOSPC_DEBUG))
+	if (btrfs_test_fs_opt(info, ENOSPC_DEBUG))
 		seq_puts(seq, ",enospc_debug");
-	if (btrfs_test_opt(info, AUTO_DEFRAG))
+	if (btrfs_test_fs_opt(info, AUTO_DEFRAG))
 		seq_puts(seq, ",autodefrag");
-	if (btrfs_test_opt(info, INODE_MAP_CACHE))
+	if (btrfs_test_fs_opt(info, INODE_MAP_CACHE))
 		seq_puts(seq, ",inode_cache");
-	if (btrfs_test_opt(info, SKIP_BALANCE))
+	if (btrfs_test_fs_opt(info, SKIP_BALANCE))
 		seq_puts(seq, ",skip_balance");
-	if (btrfs_test_opt(info, RECOVERY))
+	if (btrfs_test_fs_opt(info, RECOVERY))
 		seq_puts(seq, ",recovery");
 #ifdef CONFIG_BTRFS_FS_CHECK_INTEGRITY
-	if (btrfs_test_opt(info, CHECK_INTEGRITY_INCLUDING_EXTENT_DATA))
+	if (btrfs_test_fs_opt(info, CHECK_INTEGRITY_INCLUDING_EXTENT_DATA))
 		seq_puts(seq, ",check_int_data");
-	else if (btrfs_test_opt(info, CHECK_INTEGRITY))
+	else if (btrfs_test_fs_opt(info, CHECK_INTEGRITY))
 		seq_puts(seq, ",check_int");
 	if (info->check_integrity_print_mask)
 		seq_printf(seq, ",check_int_print_mask=%d",
@@ -1240,7 +1240,7 @@ static int btrfs_show_options(struct seq_file *seq, struct dentry *dentry)
 	if (info->metadata_ratio)
 		seq_printf(seq, ",metadata_ratio=%d",
 				info->metadata_ratio);
-	if (btrfs_test_opt(info, PANIC_ON_FATAL_ERROR))
+	if (btrfs_test_fs_opt(info, PANIC_ON_FATAL_ERROR))
 		seq_puts(seq, ",fatal_errors=panic");
 	if (info->commit_interval != BTRFS_DEFAULT_COMMIT_INTERVAL)
 		seq_printf(seq, ",commit=%d", info->commit_interval);
@@ -1622,7 +1622,7 @@ static inline void btrfs_remount_begin(struct btrfs_fs_info *fs_info,
 		struct btrfs_mount_opts *old_opts, int flags)
 {
 	if (__btrfs_test_opt(old_opts, BTRFS_MOUNT_AUTO_DEFRAG) &&
-	    (!btrfs_test_opt(fs_info, AUTO_DEFRAG) ||
+	    (!btrfs_test_fs_opt(fs_info, AUTO_DEFRAG) ||
 	     (flags & MS_RDONLY))) {
 		/* wait for any defraggers to finish */
 		wait_event(fs_info->transaction_wait,
@@ -1640,7 +1640,7 @@ static inline void btrfs_remount_cleanup(struct btrfs_fs_info *fs_info,
 	 * close or the fs is R/O.
 	 */
 	if (__btrfs_test_opt(old_opts, BTRFS_MOUNT_AUTO_DEFRAG) &&
-	    (!btrfs_test_opt(fs_info, AUTO_DEFRAG) ||
+	    (!btrfs_test_fs_opt(fs_info, AUTO_DEFRAG) ||
 	     (fs_info->sb->s_flags & MS_RDONLY))) {
 		btrfs_cleanup_defrag_inodes(fs_info);
 	}
@@ -1683,6 +1683,7 @@ static int btrfs_remount(struct super_block *sb, int *flags, char *data)
 		ret = -EINVAL;
 		goto restore;
 	}
+	btrfs_mount_opts_apply(&fs_info->mount_opts, &fs_info->tree_root->mount_opts);
 
 	btrfs_remount_begin(fs_info, &old_opts, *flags);
 	btrfs_resize_thread_pool(fs_info,

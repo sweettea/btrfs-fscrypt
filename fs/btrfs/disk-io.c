@@ -2705,6 +2705,7 @@ int open_ctree(struct super_block *sb,
 		err = ret;
 		goto fail_alloc;
 	}
+	btrfs_mount_opts_apply(&fs_info->mount_opts, &fs_info->tree_root->mount_opts);
 
 	features = btrfs_super_incompat_flags(disk_super) &
 		~BTRFS_FEATURE_INCOMPAT_SUPP;
@@ -2738,7 +2739,7 @@ int open_ctree(struct super_block *sb,
 
 	features = btrfs_super_incompat_flags(disk_super);
 	features |= BTRFS_FEATURE_INCOMPAT_MIXED_BACKREF;
-	if (btrfs_get_opt_value(fs_info, compress_type) == BTRFS_COMPRESS_LZO)
+	if (btrfs_get_opt_value(fs_info->tree_root, compress_type) == BTRFS_COMPRESS_LZO)
 		features |= BTRFS_FEATURE_INCOMPAT_COMPRESS_LZO;
 
 	if (features & BTRFS_FEATURE_INCOMPAT_SKINNY_METADATA)
@@ -2963,8 +2964,8 @@ retry_root_backup:
 	if (IS_ERR(fs_info->transaction_kthread))
 		goto fail_cleaner;
 
-	if (!btrfs_test_opt(fs_info, SSD) &&
-	    !btrfs_test_opt(fs_info, NOSSD) &&
+	if (!btrfs_test_fs_opt(fs_info, SSD) &&
+	    !btrfs_test_fs_opt(fs_info, NOSSD) &&
 	    !fs_info->fs_devices->rotating) {
 		printk(KERN_INFO "BTRFS: detected SSD devices, enabling SSD "
 		       "mode\n");
@@ -2978,9 +2979,9 @@ retry_root_backup:
 	btrfs_apply_pending_changes(fs_info);
 
 #ifdef CONFIG_BTRFS_FS_CHECK_INTEGRITY
-	if (btrfs_test_opt(fs_info, CHECK_INTEGRITY)) {
+	if (btrfs_test_fs_opt(fs_info, CHECK_INTEGRITY)) {
 		ret = btrfsic_mount(tree_root, fs_devices,
-				    btrfs_test_opt(fs_info,
+				    btrfs_test_fs_opt(fs_info,
 					CHECK_INTEGRITY_INCLUDING_EXTENT_DATA) ?
 				    1 : 0,
 				    fs_info->check_integrity_print_mask);
@@ -3069,7 +3070,7 @@ retry_root_backup:
 			close_ctree(tree_root);
 			return ret;
 		}
-	} else if (btrfs_test_opt(fs_info, RESCAN_UUID_TREE) ||
+	} else if (btrfs_test_fs_opt(fs_info, RESCAN_UUID_TREE)) {
 		   fs_info->generation !=
 				btrfs_super_uuid_tree_generation(disk_super)) {
 		pr_info("BTRFS: checking UUID tree\n");
@@ -3140,7 +3141,7 @@ fail:
 	return err;
 
 recovery_tree_root:
-	if (!btrfs_test_opt(fs_info, RECOVERY))
+	if (!btrfs_test_fs_opt(fs_info, RECOVERY))
 		goto fail_tree_roots;
 
 	free_root_pointers(fs_info, 0);
@@ -3526,7 +3527,7 @@ static int write_all_supers(struct btrfs_root *root, int max_mirrors)
 	int total_errors = 0;
 	u64 flags;
 
-	do_barriers = !btrfs_test_opt(root->fs_info, NOBARRIER);
+	do_barriers = !btrfs_test_fs_opt(root->fs_info, NOBARRIER);
 	backup_super_roots(root->fs_info);
 
 	sb = root->fs_info->super_for_commit;
@@ -3800,7 +3801,7 @@ void close_ctree(struct btrfs_root *root)
 	iput(fs_info->btree_inode);
 
 #ifdef CONFIG_BTRFS_FS_CHECK_INTEGRITY
-	if (btrfs_test_opt(fs_info, CHECK_INTEGRITY))
+	if (btrfs_test_fs_opt(fs_info, CHECK_INTEGRITY))
 		btrfsic_unmount(root, fs_info->fs_devices);
 #endif
 
