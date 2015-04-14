@@ -380,9 +380,9 @@ static match_table_t tokens = {
  * reading in a new superblock is parsed here.
  * XXX JDM: This needs to be cleaned up for remount.
  */
-int btrfs_parse_options(struct btrfs_root *root, char *options)
+int btrfs_parse_options(struct btrfs_fs_info *info, char *options)
 {
-	struct btrfs_fs_info *info = root->fs_info;
+	struct btrfs_root *root = info->tree_root;
 	substring_t args[MAX_OPT_ARGS];
 	char *p, *num, *orig = NULL;
 	u64 cache_gen;
@@ -1621,7 +1621,7 @@ static int btrfs_remount(struct super_block *sb, int *flags, char *data)
 		}
 	}
 
-	ret = btrfs_parse_options(root, data);
+	ret = btrfs_parse_options(fs_info, data);
 	if (ret) {
 		ret = -EINVAL;
 		goto restore;

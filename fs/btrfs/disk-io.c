@@ -2703,7 +2703,7 @@ int open_ctree(struct super_block *sb,
 	 */
 	fs_info->compress_type = BTRFS_COMPRESS_ZLIB;
 
-	ret = btrfs_parse_options(tree_root, options);
+	ret = btrfs_parse_options(fs_info, options);
 	if (ret) {
 		err = ret;
 		goto fail_alloc;
