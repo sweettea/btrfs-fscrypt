@@ -1650,6 +1650,7 @@ static int btrfs_remount(struct super_block *sb, int *flags, char *data)
 		}
 	}
 
+	btrfs_mount_opts_init(&fs_info->tree_root->mount_opts);
 	ret = btrfs_parse_options(fs_info, data);
 	if (ret) {
 		ret = -EINVAL;

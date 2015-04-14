@@ -2699,6 +2699,7 @@ int open_ctree(struct super_block *sb,
 	generation = btrfs_super_generation(disk_super);
 	find_oldest_super_backup(fs_info, generation);
 
+	btrfs_mount_opts_init(&fs_info->tree_root->mount_opts);
 	ret = btrfs_parse_options(fs_info, options);
 	if (ret) {
 		err = ret;
