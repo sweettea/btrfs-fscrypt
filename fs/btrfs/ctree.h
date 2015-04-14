@@ -2172,6 +2172,16 @@ struct btrfs_ioctl_defrag_range_args {
 #define BTRFS_DEFAULT_COMMIT_INTERVAL	(30)
 #define BTRFS_DEFAULT_MAX_INLINE	(8192)
 
+/*
+ * Options allowed for per-subvolume mounts
+ */
+#define BTRFS_PER_SUBVOLUME_OPTIONS_MASK       (			\
+	BTRFS_MOUNT_NODATASUM |						\
+	BTRFS_MOUNT_NODATACOW |						\
+	BTRFS_MOUNT_COMPRESS |						\
+	BTRFS_MOUNT_FORCE_COMPRESS |					\
+	BTRFS_MOUNT_MAX_INLINE)
+
 #define btrfs_clear_opt(owner, opt)					\
 	__btrfs_clear_opt(&((owner)->mount_opts), BTRFS_MOUNT_##opt)
 static inline void __btrfs_clear_opt(struct btrfs_mount_opts *opts, unsigned opt)
