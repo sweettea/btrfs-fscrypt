@@ -2199,20 +2199,6 @@ static inline bool __btrfs_test_opt(struct btrfs_mount_opts *opts, unsigned opt)
 #define btrfs_set_opt_value(owner, item, value)				\
 	((owner)->mount_opts.item = (value))
 
-#define btrfs_set_and_info(info, opt, fmt, args...)			\
-{									\
-	if (!btrfs_test_opt((info), opt))				\
-		btrfs_info((info), fmt, ##args);			\
-	btrfs_set_opt((info), opt);					\
-}
-
-#define btrfs_clear_and_info(info, opt, fmt, args...)			\
-{									\
-	if (btrfs_test_opt((info), opt))				\
-		btrfs_info((info), fmt, ##args);			\
-	btrfs_clear_opt((info), opt);					\
-}
-
 /*
  * Requests for changes that need to be done during transaction commit.
  *

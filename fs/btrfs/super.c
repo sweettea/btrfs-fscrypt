@@ -375,6 +375,20 @@ static match_table_t tokens = {
 	{Opt_err, NULL},
 };
 
+#define btrfs_set_and_info(info, opt, fmt, args...)			\
+do {									\
+	if (!btrfs_test_opt((info), opt))				\
+		btrfs_info((info), fmt, ##args);			\
+	btrfs_set_opt((info), opt);					\
+} while(0)
+
+#define btrfs_clear_and_info(info, opt, fmt, args...)			\
+do {									\
+	if (btrfs_test_opt((info), opt))				\
+		btrfs_info((info), fmt, ##args);			\
+	btrfs_clear_opt((info), opt);					\
+} while(0)
+
 /*
  * Regular mount options parser.  Everything that is needed only when
  * reading in a new superblock is parsed here.
