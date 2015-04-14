@@ -2174,6 +2174,8 @@ struct btrfs_ioctl_defrag_range_args {
 
 /*
  * Options allowed for per-subvolume mounts
+ *
+ * Note: keep in sync with btrfs_mount_opts_apply
  */
 #define BTRFS_PER_SUBVOLUME_OPTIONS_MASK       (			\
 	BTRFS_MOUNT_NODATASUM |						\

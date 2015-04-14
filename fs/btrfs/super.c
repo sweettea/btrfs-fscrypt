@@ -1134,6 +1134,33 @@ void btrfs_mount_opts_init(struct btrfs_mount_opts *opts)
 	opts->max_inline = BTRFS_DEFAULT_MAX_INLINE;
 }
 
+static bool btrfs_mount_opts_apply_one(struct btrfs_mount_opts *dest,
+		struct btrfs_mount_opts *src, u64 opt)
+{
+	if (src->mount_opt_isset & opt) {
+		if (src->mount_opt & opt)
+			__btrfs_set_opt(dest, opt);
+		else
+			__btrfs_clear_opt(dest, opt);
+		return true;
+	}
+
+	return false;
+}
+
+void btrfs_mount_opts_apply(struct btrfs_mount_opts *dest,
+		struct btrfs_mount_opts *src)
+{
+	btrfs_mount_opts_apply_one(dest, src, BTRFS_MOUNT_NODATASUM);
+	btrfs_mount_opts_apply_one(dest, src, BTRFS_MOUNT_NODATACOW);
+	if (btrfs_mount_opts_apply_one(dest, src, BTRFS_MOUNT_COMPRESS))
+		dest->compress_type = src->compress_type;
+	if (btrfs_mount_opts_apply_one(dest, src, BTRFS_MOUNT_FORCE_COMPRESS))
+		dest->compress_type = src->compress_type;
+	if (btrfs_mount_opts_apply_one(dest, src, BTRFS_MOUNT_MAX_INLINE))
+		dest->max_inline = src->max_inline;
+}
+
 static int btrfs_show_options(struct seq_file *seq, struct dentry *dentry)
 {
 	struct btrfs_fs_info *info = btrfs_sb(dentry->d_sb);
