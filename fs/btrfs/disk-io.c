@@ -1569,6 +1569,7 @@ int btrfs_init_fs_root(struct btrfs_root *root)
 	btrfs_init_free_ino_ctl(root);
 	spin_lock_init(&root->ino_cache_lock);
 	init_waitqueue_head(&root->ino_cache_wait);
+	btrfs_mount_opts_init(&root->mount_opts);
 
 	ret = get_anon_bdev(&root->anon_dev);
 	if (ret)

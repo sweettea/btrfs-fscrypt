@@ -4074,6 +4074,8 @@ ssize_t btrfs_listxattr(struct dentry *dentry, char *buffer, size_t size);
 int btrfs_parse_options(struct btrfs_fs_info *fs_info, char *options);
 int btrfs_sync_fs(struct super_block *sb, int wait);
 void btrfs_mount_opts_init(struct btrfs_mount_opts *dest);
+void btrfs_mount_opts_apply(struct btrfs_mount_opts *dest,
+		struct btrfs_mount_opts *src);
 
 #ifdef CONFIG_PRINTK
 __printf(2, 3)

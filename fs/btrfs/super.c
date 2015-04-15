@@ -405,6 +405,9 @@ int btrfs_parse_options(struct btrfs_fs_info *info, char *options)
 	char *compress_type;
 	bool compress_force = false;
 
+	printk(KERN_ERR "DBG: parse options %s\n", options);
+	/* WARN_ON(1); */
+
 	cache_gen = btrfs_super_cache_generation(root->fs_info->super_copy);
 	if (cache_gen)
 		btrfs_set_opt(info, SPACE_CACHE);
@@ -1151,6 +1154,13 @@ static bool btrfs_mount_opts_apply_one(struct btrfs_mount_opts *dest,
 void btrfs_mount_opts_apply(struct btrfs_mount_opts *dest,
 		struct btrfs_mount_opts *src)
 {
+	printk(KERN_ERR "DBG: apply %lx/%lx <- %lx/%lx\n",
+			dest->mount_opt, dest->mount_opt_isset,
+			src->mount_opt, src->mount_opt_isset);
+	printk(KERN_ERR "DBG: dest: ct %u\n", dest->compress_type);
+	printk(KERN_ERR "DBG: dest: mi %llu\n", dest->max_inline);
+	printk(KERN_ERR "DBG: src: ct %u\n", src->compress_type);
+	printk(KERN_ERR "DBG: src: mi %llu\n", src->max_inline);
 	btrfs_mount_opts_apply_one(dest, src, BTRFS_MOUNT_NODATASUM);
 	btrfs_mount_opts_apply_one(dest, src, BTRFS_MOUNT_NODATACOW);
 	if (btrfs_mount_opts_apply_one(dest, src, BTRFS_MOUNT_COMPRESS))
@@ -1159,6 +1169,14 @@ void btrfs_mount_opts_apply(struct btrfs_mount_opts *dest,
 		dest->compress_type = src->compress_type;
 	if (btrfs_mount_opts_apply_one(dest, src, BTRFS_MOUNT_MAX_INLINE))
 		dest->max_inline = src->max_inline;
+	printk(KERN_ERR "DBG -- apply -- out\n");
+	printk(KERN_ERR "DBG: apply %lx/%lx <- %lx/%lx\n",
+			dest->mount_opt, dest->mount_opt_isset,
+			src->mount_opt, src->mount_opt_isset);
+	printk(KERN_ERR "DBG: dest: ct %u\n", dest->compress_type);
+	printk(KERN_ERR "DBG: dest: mi %llu\n", dest->max_inline);
+	printk(KERN_ERR "DBG: src: ct %u\n", src->compress_type);
+	printk(KERN_ERR "DBG: src: mi %llu\n", src->max_inline);
 }
 
 static int btrfs_show_options(struct seq_file *seq, struct dentry *dentry)
@@ -1320,6 +1338,9 @@ static struct dentry *mount_subvol(const char *subvol_name, u64 subvol_objectid,
 	struct vfsmount *mnt = NULL;
 	char *newargs;
 	int ret;
+
+	printk(KERN_ERR "DBG: mount subvol %s id %llu\n", subvol_name,
+			subvol_objectid);
 
 	newargs = setup_root_args(data);
 	if (!newargs) {
@@ -1495,9 +1516,28 @@ static struct dentry *btrfs_mount(struct file_system_type *fs_type, int flags,
 	}
 
 	if (subvol_name || subvol_objectid != BTRFS_FS_TREE_OBJECTID) {
+		struct dentry *root_dentry;
+		struct btrfs_root *root;
+
 		/* mount_subvol() will free subvol_name. */
-		return mount_subvol(subvol_name, subvol_objectid, flags,
+		root_dentry = mount_subvol(subvol_name, subvol_objectid, flags,
 				    device_name, data);
+
+		if (IS_ERR_OR_NULL(root_dentry))
+			return root_dentry;
+
+		/*
+		 * Went through the main mount loop, parsed options and stored them to
+		 * tree_root, time to apply them
+		 */
+		root = BTRFS_I(root_dentry->d_inode)->root;
+		fs_info = root->fs_info;
+		printk(KERN_ERR "DBG: mounted subvol id %llu\n",
+				root->root_key.objectid);
+		btrfs_mount_opts_apply(&root->mount_opts, &fs_info->tree_root->mount_opts);
+		printk(KERN_ERR "DBG: applied\n");
+
+		return root_dentry;
 	}
 
 	security_init_mnt_opts(&new_sec_opts);
