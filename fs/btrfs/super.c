@@ -1515,7 +1515,8 @@ static struct dentry *btrfs_mount(struct file_system_type *fs_type, int flags,
 		return ERR_PTR(error);
 	}
 
-	if (subvol_name || subvol_objectid != BTRFS_FS_TREE_OBJECTID) {
+	if (subvol_name || (subvol_objectid != BTRFS_FS_TREE_OBJECTID
+			 && subvol_objectid != 0)) {
 		struct dentry *root_dentry;
 		struct btrfs_root *root;
 
