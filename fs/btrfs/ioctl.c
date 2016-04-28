@@ -2634,20 +2634,35 @@ out:
 	return ret;
 }
 
-static long btrfs_ioctl_add_dev(struct btrfs_root *root, void __user *arg)
+static long btrfs_ioctl_add_dev(struct file *file, void __user *arg)
 {
+	struct btrfs_root *root = BTRFS_I(file_inode(file))->root;
 	struct btrfs_ioctl_vol_args *vol_args;
+	int do_drop_write = false;
 	int ret;
 
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 
-	if (atomic_xchg(&root->fs_info->mutually_exclusive_operation_running,
-			1)) {
-		return BTRFS_ERROR_DEV_EXCL_RUN_IN_PROGRESS;
+	/*
+	 * Seeding devices are read-only, but we are allowed to add a device
+	 * and turn the filesytem read-write. In this case the want_write check
+	 * is done in btrfs_init_new_device as soon as the filesystem drops
+	 * MS_RDONLY.
+	 */
+	if (!((sb->s_flags & MS_RDONLY) && !root->fs_info->fs_devices->seeding)) {
+		do_drop_write = true;
+		ret = mnt_want_write_file(file);
+		if (ret)
+			return ret;
 	}
 
-	mutex_lock(&root->fs_info->volume_mutex);
+	if (atomic_xchg(&root->fs_info->mutually_exclusive_operation_running,
+			1)) {
+		ret = BTRFS_ERROR_DEV_EXCL_RUN_IN_PROGRESS;
+		goto out_drop_write;
+	}
+
 	vol_args = memdup_user(arg, sizeof(*vol_args));
 	if (IS_ERR(vol_args)) {
 		ret = PTR_ERR(vol_args);
@@ -2655,15 +2670,20 @@ static long btrfs_ioctl_add_dev(struct btrfs_root *root, void __user *arg)
 	}
 
 	vol_args->name[BTRFS_PATH_NAME_MAX] = '\0';
+	mutex_lock(&root->fs_info->volume_mutex);
 	ret = btrfs_init_new_device(root, vol_args->name);
+	mutex_unlock(&root->fs_info->volume_mutex);
 
 	if (!ret)
 		btrfs_info(root->fs_info, "disk added %s",vol_args->name);
 
 	kfree(vol_args);
 out:
-	mutex_unlock(&root->fs_info->volume_mutex);
 	atomic_set(&root->fs_info->mutually_exclusive_operation_running, 0);
+out_drop_write:
+	if (do_drop_write)
+		mnt_drop_write_file(file);
+
 	return ret;
 }
 
@@ -5465,7 +5485,7 @@ long btrfs_ioctl(struct file *file, unsigned int
 	case BTRFS_IOC_RESIZE:
 		return btrfs_ioctl_resize(file, argp);
 	case BTRFS_IOC_ADD_DEV:
-		return btrfs_ioctl_add_dev(root, argp);
+		return btrfs_ioctl_add_dev(file, argp);
 	case BTRFS_IOC_RM_DEV:
 		return btrfs_ioctl_rm_dev(file, argp);
 	case BTRFS_IOC_FS_INFO:

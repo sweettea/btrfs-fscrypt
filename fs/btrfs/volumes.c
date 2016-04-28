@@ -27,6 +27,7 @@
 #include <linux/kthread.h>
 #include <linux/raid/pq.h>
 #include <linux/semaphore.h>
+#include <linux/mount.h>
 #include <asm/div64.h>
 #include "ctree.h"
 #include "extent_map.h"
