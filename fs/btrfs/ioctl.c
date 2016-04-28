@@ -4372,8 +4372,9 @@ static long btrfs_ioctl_get_dev_stats(struct btrfs_root *root,
 	return ret;
 }
 
-static long btrfs_ioctl_dev_replace(struct btrfs_root *root, void __user *arg)
+static long btrfs_ioctl_dev_replace(struct file *file, void __user *arg)
 {
+	struct btrfs_root *root = BTRFS_I(file_inode(file))->root;
 	struct btrfs_ioctl_dev_replace_args *p;
 	int ret;
 
@@ -4386,15 +4387,16 @@ static long btrfs_ioctl_dev_replace(struct btrfs_root *root, void __user *arg)
 
 	switch (p->cmd) {
 	case BTRFS_IOCTL_DEV_REPLACE_CMD_START:
-		if (root->fs_info->sb->s_flags & MS_RDONLY) {
-			ret = -EROFS;
-			goto out;
-		}
 		if (atomic_xchg(
 			&root->fs_info->mutually_exclusive_operation_running,
 			1)) {
 			ret = BTRFS_ERROR_DEV_EXCL_RUN_IN_PROGRESS;
 		} else {
+			/* TODO: manage state of drop, maybe in context ? */
+			ret = mnt_want_write_file(file);
+			if (ret)
+				goto out;
+
 			ret = btrfs_dev_replace_start(root, p);
 			atomic_set(
 			 &root->fs_info->mutually_exclusive_operation_running,
@@ -5566,7 +5568,7 @@ long btrfs_ioctl(struct file *file, unsigned int
 	case BTRFS_IOC_QUOTA_RESCAN_WAIT:
 		return btrfs_ioctl_quota_rescan_wait(file, argp);
 	case BTRFS_IOC_DEV_REPLACE:
-		return btrfs_ioctl_dev_replace(root, argp);
+		return btrfs_ioctl_dev_replace(file, argp);
 	case BTRFS_IOC_GET_FSLABEL:
 		return btrfs_ioctl_get_fslabel(file, argp);
 	case BTRFS_IOC_SET_FSLABEL:
