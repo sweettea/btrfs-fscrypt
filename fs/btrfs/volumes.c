@@ -2240,7 +2240,13 @@ error:
 	return ret;
 }
 
-int btrfs_init_new_device(struct btrfs_root *root, char *device_path)
+/*
+ * Initialize a new device. Handle the seeding mode when the first writable
+ * device will make the whole filesystem writable. In this case the @file
+ * parameter is used to set up the write protection. In non-seeding and RW mode
+ * it's unused and expected to be done by the caller.
+ */
+int btrfs_init_new_device(struct btrfs_root *root, char *device_path, struct file *file)
 {
 	struct request_queue *q;
 	struct btrfs_trans_handle *trans;
@@ -2252,6 +2258,7 @@ int btrfs_init_new_device(struct btrfs_root *root, char *device_path)
 	u64 tmp;
 	int seeding_dev = 0;
 	int ret = 0;
+	bool do_drop_write = false;
 
 	if ((sb->s_flags & MS_RDONLY) && !root->fs_info->fs_devices->seeding)
 		return -EROFS;
@@ -2297,6 +2304,10 @@ int btrfs_init_new_device(struct btrfs_root *root, char *device_path)
 	}
 	rcu_assign_pointer(device->name, name);
 
+	/*
+	 * In case of single-device seeding mode this does not trigger any
+	 * writes, the mnt_want_write protection can be done later.
+	 */
 	trans = btrfs_start_transaction(root, 0);
 	if (IS_ERR(trans)) {
 		rcu_string_free(device->name);
@@ -2325,6 +2336,12 @@ int btrfs_init_new_device(struct btrfs_root *root, char *device_path)
 	set_blocksize(device->bdev, 4096);
 
 	if (seeding_dev) {
+		if (file) {
+			ret = mnt_want_write_file(file);
+			if (ret < 0)
+				goto error_trans;
+			do_drop_write = true;
+		}
 		sb->s_flags &= ~MS_RDONLY;
 		ret = btrfs_prepare_sprout(root);
 		BUG_ON(ret); /* -ENOMEM */
@@ -2415,7 +2432,7 @@ int btrfs_init_new_device(struct btrfs_root *root, char *device_path)
 		up_write(&sb->s_umount);
 
 		if (ret) /* transaction commit */
-			return ret;
+			goto error_no_commit;
 
 		ret = btrfs_relocate_sys_chunks(root);
 		if (ret < 0)
@@ -2424,16 +2441,19 @@ int btrfs_init_new_device(struct btrfs_root *root, char *device_path)
 				    "device initialization. This can be fixed "
 				    "using the \"btrfs balance\" command.");
 		trans = btrfs_attach_transaction(root);
-		if (IS_ERR(trans)) {
-			if (PTR_ERR(trans) == -ENOENT)
-				return 0;
-			return PTR_ERR(trans);
+		ret = PTR_ERR(trans);
+		if (ret < 0) {
+			if (ret == -ENOENT)
+				ret = 0;
+			goto error_no_commit;
 		}
 		ret = btrfs_commit_transaction(trans, root);
 	}
 
 	/* Update ctime/mtime for libblkid */
 	update_dev_time(device_path);
+
+error_no_commit:
 	return ret;
 
 error_trans:
@@ -2446,6 +2466,8 @@ error:
 	if (seeding_dev) {
 		mutex_unlock(&uuid_mutex);
 		up_write(&sb->s_umount);
+		if (file && do_drop_write)
+			mnt_drop_write_file(file);
 	}
 	return ret;
 }

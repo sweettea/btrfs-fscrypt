@@ -2671,7 +2671,7 @@ static long btrfs_ioctl_add_dev(struct file *file, void __user *arg)
 
 	vol_args->name[BTRFS_PATH_NAME_MAX] = '\0';
 	mutex_lock(&root->fs_info->volume_mutex);
-	ret = btrfs_init_new_device(root, vol_args->name);
+	ret = btrfs_init_new_device(root, vol_args->name, file);
 	mutex_unlock(&root->fs_info->volume_mutex);
 
 	if (!ret)
