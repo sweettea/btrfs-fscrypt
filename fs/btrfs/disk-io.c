@@ -4015,7 +4015,7 @@ void close_ctree(struct btrfs_fs_info *fs_info)
 
 	btrfs_free_stripe_hash_table(fs_info);
 
-	__btrfs_free_block_rsv(root->orphan_block_rsv);
+	kfree(root->orphan_block_rsv);
 	root->orphan_block_rsv = NULL;
 
 	mutex_lock(&fs_info->chunk_mutex);
