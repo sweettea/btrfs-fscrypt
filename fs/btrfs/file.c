@@ -2515,7 +2515,7 @@ static int btrfs_punch_hole(struct inode *inode, loff_t offset, loff_t len)
 	}
 
 	btrfs_init_block_rsv(&rsv, BTRFS_BLOCK_RSV_TEMP);
-	rsv.size = btrfs_calc_trans_metadata_size(fs_info, 1);
+	rsv.size = min_size;
 	rsv.failfast = 1;
 
 	/*
