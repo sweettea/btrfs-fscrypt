@@ -2364,7 +2364,7 @@ static int btrfs_punch_hole(struct inode *inode, loff_t offset, loff_t len)
 	struct btrfs_root *root = BTRFS_I(inode)->root;
 	struct extent_state *cached_state = NULL;
 	struct btrfs_path *path;
-	struct btrfs_block_rsv *rsv;
+	struct btrfs_block_rsv rsv;
 	struct btrfs_trans_handle *trans;
 	u64 lockstart;
 	u64 lockend;
@@ -2514,13 +2514,9 @@ static int btrfs_punch_hole(struct inode *inode, loff_t offset, loff_t len)
 		goto out;
 	}
 
-	rsv = btrfs_alloc_block_rsv(fs_info, BTRFS_BLOCK_RSV_TEMP);
-	if (!rsv) {
-		ret = -ENOMEM;
-		goto out_free;
-	}
-	rsv->size = btrfs_calc_trans_metadata_size(fs_info, 1);
-	rsv->failfast = 1;
+	btrfs_init_block_rsv(&rsv, BTRFS_BLOCK_RSV_TEMP);
+	rsv.size = btrfs_calc_trans_metadata_size(fs_info, 1);
+	rsv.failfast = 1;
 
 	/*
 	 * 1 - update the inode
@@ -2534,10 +2530,10 @@ static int btrfs_punch_hole(struct inode *inode, loff_t offset, loff_t len)
 		goto out_free;
 	}
 
-	ret = btrfs_block_rsv_migrate(&fs_info->trans_block_rsv, rsv,
+	ret = btrfs_block_rsv_migrate(&fs_info->trans_block_rsv, &rsv,
 				      min_size, 0);
 	BUG_ON(ret);
-	trans->block_rsv = rsv;
+	trans->block_rsv = &rsv;
 
 	cur_offset = lockstart;
 	len = lockend - cur_offset;
@@ -2585,9 +2581,9 @@ static int btrfs_punch_hole(struct inode *inode, loff_t offset, loff_t len)
 		}
 
 		ret = btrfs_block_rsv_migrate(&fs_info->trans_block_rsv,
-					      rsv, min_size, 0);
+					      &rsv, min_size, 0);
 		BUG_ON(ret);	/* shouldn't happen */
-		trans->block_rsv = rsv;
+		trans->block_rsv = &rsv;
 
 		ret = find_first_non_hole(inode, &cur_offset, &len);
 		if (unlikely(ret < 0))
@@ -2646,7 +2642,7 @@ out_trans:
 	btrfs_btree_balance_dirty(fs_info);
 out_free:
 	btrfs_free_path(path);
-	btrfs_free_block_rsv(fs_info, rsv);
+	btrfs_block_rsv_release(fs_info, &rsv, (u64)-1);
 out:
 	unlock_extent_cached(&BTRFS_I(inode)->io_tree, lockstart, lockend,
 			     &cached_state, GFP_NOFS);
