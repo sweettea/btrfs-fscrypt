@@ -9099,7 +9099,7 @@ static int btrfs_truncate(struct inode *inode)
 {
 	struct btrfs_fs_info *fs_info = btrfs_sb(inode->i_sb);
 	struct btrfs_root *root = BTRFS_I(inode)->root;
-	struct btrfs_block_rsv *rsv;
+	struct btrfs_block_rsv rsv;
 	int ret = 0;
 	int err = 0;
 	struct btrfs_trans_handle *trans;
@@ -9147,11 +9147,9 @@ static int btrfs_truncate(struct inode *inode)
 	 * 3) fs_info->trans_block_rsv - this will have 1 items worth left for
 	 * updating the inode.
 	 */
-	rsv = btrfs_alloc_block_rsv(fs_info, BTRFS_BLOCK_RSV_TEMP);
-	if (!rsv)
-		return -ENOMEM;
-	rsv->size = min_size;
-	rsv->failfast = 1;
+	btrfs_init_block_rsv(&rsv, BTRFS_BLOCK_RSV_TEMP);
+	rsv.size = min_size;
+	rsv.failfast = 1;
 
 	/*
 	 * 1 for the truncate slack space
@@ -9164,7 +9162,7 @@ static int btrfs_truncate(struct inode *inode)
 	}
 
 	/* Migrate the slack space for the truncate to our reserve */
-	ret = btrfs_block_rsv_migrate(&fs_info->trans_block_rsv, rsv,
+	ret = btrfs_block_rsv_migrate(&fs_info->trans_block_rsv, &rsv,
 				      min_size, 0);
 	BUG_ON(ret);
 
@@ -9176,7 +9174,7 @@ static int btrfs_truncate(struct inode *inode)
 	 * safe.
 	 */
 	set_bit(BTRFS_INODE_NEEDS_FULL_SYNC, &BTRFS_I(inode)->runtime_flags);
-	trans->block_rsv = rsv;
+	trans->block_rsv = &rsv;
 
 	while (1) {
 		ret = btrfs_truncate_inode_items(trans, root, inode,
@@ -9205,9 +9203,9 @@ static int btrfs_truncate(struct inode *inode)
 		}
 
 		ret = btrfs_block_rsv_migrate(&fs_info->trans_block_rsv,
-					      rsv, min_size, 0);
+					      &rsv, min_size, 0);
 		BUG_ON(ret);	/* shouldn't happen */
-		trans->block_rsv = rsv;
+		trans->block_rsv = &rsv;
 	}
 
 	if (ret == 0 && inode->i_nlink > 0) {
@@ -9227,7 +9225,7 @@ static int btrfs_truncate(struct inode *inode)
 		btrfs_btree_balance_dirty(fs_info);
 	}
 out:
-	btrfs_free_block_rsv(fs_info, rsv);
+	btrfs_block_rsv_release(fs_info, &rsv, (u64)-1);
 
 	if (ret && !err)
 		err = ret;
