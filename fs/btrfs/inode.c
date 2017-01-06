@@ -5230,7 +5230,7 @@ void btrfs_evict_inode(struct inode *inode)
 	struct btrfs_fs_info *fs_info = btrfs_sb(inode->i_sb);
 	struct btrfs_trans_handle *trans;
 	struct btrfs_root *root = BTRFS_I(inode)->root;
-	struct btrfs_block_rsv *rsv, *global_rsv;
+	struct btrfs_block_rsv rsv, *global_rsv;
 	int steal_from_global = 0;
 	u64 min_size;
 	int ret;
@@ -5280,13 +5280,9 @@ void btrfs_evict_inode(struct inode *inode)
 		goto no_delete;
 	}
 
-	rsv = btrfs_alloc_block_rsv(fs_info, BTRFS_BLOCK_RSV_TEMP);
-	if (!rsv) {
-		btrfs_orphan_del(NULL, inode);
-		goto no_delete;
-	}
-	rsv->size = min_size;
-	rsv->failfast = 1;
+	btrfs_init_block_rsv(&rsv, BTRFS_BLOCK_RSV_TEMP);
+	rsv.size = min_size;
+	rsv.failfast = 1;
 	global_rsv = &fs_info->global_block_rsv;
 
 	btrfs_i_size_write(inode, 0);
@@ -5298,7 +5294,7 @@ void btrfs_evict_inode(struct inode *inode)
 	 * inode item when doing the truncate.
 	 */
 	while (1) {
-		ret = btrfs_block_rsv_refill(root, rsv, min_size,
+		ret = btrfs_block_rsv_refill(root, &rsv, min_size,
 					     BTRFS_RESERVE_FLUSH_LIMIT);
 
 		/*
@@ -5325,14 +5321,14 @@ void btrfs_evict_inode(struct inode *inode)
 				   "Could not get space for a delete, will truncate on mount %d",
 				   ret);
 			btrfs_orphan_del(NULL, inode);
-			btrfs_free_block_rsv(fs_info, rsv);
+			btrfs_block_rsv_release(fs_info, &rsv, (u64)-1);
 			goto no_delete;
 		}
 
 		trans = btrfs_join_transaction(root);
 		if (IS_ERR(trans)) {
 			btrfs_orphan_del(NULL, inode);
-			btrfs_free_block_rsv(fs_info, rsv);
+			btrfs_block_rsv_release(fs_info, &rsv, (u64)-1);
 			goto no_delete;
 		}
 
@@ -5343,7 +5339,7 @@ void btrfs_evict_inode(struct inode *inode)
 		 */
 		if (steal_from_global) {
 			if (!btrfs_check_space_for_delayed_refs(trans, fs_info))
-				ret = btrfs_block_rsv_migrate(global_rsv, rsv,
+				ret = btrfs_block_rsv_migrate(global_rsv, &rsv,
 							      min_size, 0);
 			else
 				ret = -ENOSPC;
@@ -5358,7 +5354,7 @@ void btrfs_evict_inode(struct inode *inode)
 			ret = btrfs_commit_transaction(trans);
 			if (ret) {
 				btrfs_orphan_del(NULL, inode);
-				btrfs_free_block_rsv(fs_info, rsv);
+				btrfs_block_rsv_release(fs_info, &rsv, (u64)-1);
 				goto no_delete;
 			}
 			continue;
@@ -5366,7 +5362,7 @@ void btrfs_evict_inode(struct inode *inode)
 			steal_from_global = 0;
 		}
 
-		trans->block_rsv = rsv;
+		trans->block_rsv = &rsv;
 
 		ret = btrfs_truncate_inode_items(trans, root, inode, 0, 0);
 		if (ret != -ENOSPC && ret != -EAGAIN)
@@ -5378,7 +5374,7 @@ void btrfs_evict_inode(struct inode *inode)
 		btrfs_btree_balance_dirty(fs_info);
 	}
 
-	btrfs_free_block_rsv(fs_info, rsv);
+	btrfs_block_rsv_release(fs_info, &rsv, (u64)-1);
 
 	/*
 	 * Errors here aren't a big deal, it just means we leave orphan items
