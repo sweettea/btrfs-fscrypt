@@ -2646,7 +2646,7 @@ readpage_ok:
 		unlock_page(page);
 		offset += len;
 
-		if (unlikely(!uptodate)) {
+		if (!uptodate) {
 			if (extent_len) {
 				endio_readpage_release_extent(tree,
 							      extent_start,

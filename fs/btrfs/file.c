@@ -445,7 +445,7 @@ static noinline int btrfs_copy_from_user(loff_t pos, size_t write_bytes,
 		total_copied += copied;
 
 		/* Return to btrfs_file_write_iter to fault page */
-		if (unlikely(copied == 0))
+		if (copied == 0)
 			break;
 
 		if (copied < PAGE_SIZE - offset) {

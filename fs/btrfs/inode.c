@@ -7504,7 +7504,7 @@ bool btrfs_page_exists_in_range(struct inode *inode, loff_t start, loff_t end)
 	while (page == NULL &&
 	       radix_tree_gang_lookup_slot(root, &pagep, NULL, start_idx, 1)) {
 		page = radix_tree_deref_slot(pagep);
-		if (unlikely(!page))
+		if (!page)
 			break;
 
 		if (radix_tree_exception(page)) {

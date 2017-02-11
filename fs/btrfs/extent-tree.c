@@ -7571,7 +7571,7 @@ search:
 
 have_block_group:
 		cached = block_group_cache_done(block_group);
-		if (unlikely(!cached)) {
+		if (!cached) {
 			have_caching_bg = true;
 			ret = cache_block_group(block_group, 0);
 			BUG_ON(ret < 0);
@@ -8303,7 +8303,7 @@ use_block_rsv(struct btrfs_trans_handle *trans,
 
 	block_rsv = get_block_rsv(trans, root);
 
-	if (unlikely(block_rsv->size == 0))
+	if (block_rsv->size == 0)
 		goto try_reserve;
 again:
 	ret = block_rsv_use_bytes(block_rsv, blocksize);
@@ -8682,7 +8682,7 @@ static noinline int do_walk_down(struct btrfs_trans_handle *trans,
 	if (ret < 0)
 		goto out_unlock;
 
-	if (unlikely(wc->refs[level - 1] == 0)) {
+	if (wc->refs[level - 1] == 0) {
 		btrfs_err(fs_info, "Missing references.");
 		ret = -EIO;
 		goto out_unlock;
