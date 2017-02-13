@@ -8172,7 +8172,7 @@ next_block:
 		ret = __readpage_endio_check(inode, io_bio, csum_pos,
 					bvec->bv_page, pgoff, start,
 					sectorsize);
-		if (likely(!ret))
+		if (!ret)
 			goto next;
 try_again:
 		done.uptodate = 0;

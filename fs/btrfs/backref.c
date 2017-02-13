@@ -1275,7 +1275,7 @@ again:
 	BUG_ON(ret == 0);
 
 #ifdef CONFIG_BTRFS_FS_RUN_SANITY_TESTS
-	if (trans && likely(trans->type != __TRANS_DUMMY) &&
+	if (trans && trans->type != __TRANS_DUMMY &&
 	    time_seq != SEQ_LAST) {
 #else
 	if (trans && time_seq != SEQ_LAST) {

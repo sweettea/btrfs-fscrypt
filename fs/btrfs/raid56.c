@@ -1280,7 +1280,7 @@ static noinline void finish_rmw(struct btrfs_raid_bio *rbio)
 		}
 	}
 
-	if (likely(!bbio->num_tgtdevs))
+	if (!bbio->num_tgtdevs)
 		goto write_data;
 
 	for (stripe = 0; stripe < rbio->real_stripes; stripe++) {

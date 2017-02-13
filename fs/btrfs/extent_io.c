@@ -2581,7 +2581,7 @@ static void end_bio_extent_readpage(struct bio *bio)
 		len = bvec->bv_len;
 
 		mirror = io_bio->mirror_num;
-		if (likely(uptodate && tree->ops)) {
+		if (uptodate && tree->ops) {
 			ret = tree->ops->readpage_end_io_hook(io_bio, offset,
 							      page, start, end,
 							      mirror);
@@ -2592,7 +2592,7 @@ static void end_bio_extent_readpage(struct bio *bio)
 						page, 0);
 		}
 
-		if (likely(uptodate))
+		if (uptodate)
 			goto readpage_ok;
 
 		if (tree->ops) {
@@ -2629,7 +2629,7 @@ static void end_bio_extent_readpage(struct bio *bio)
 			ASSERT(ret == -EIO);
 		}
 readpage_ok:
-		if (likely(uptodate)) {
+		if (uptodate) {
 			loff_t i_size = i_size_read(inode);
 			pgoff_t end_index = i_size >> PAGE_SHIFT;
 			unsigned off;
