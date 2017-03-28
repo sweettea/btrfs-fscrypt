@@ -32,6 +32,7 @@
 #include <linux/writeback.h>
 #include <linux/bit_spinlock.h>
 #include <linux/slab.h>
+#include <linux/shrinker.h>
 #include "ctree.h"
 #include "disk-io.h"
 #include "transaction.h"
@@ -85,16 +86,97 @@ static int btrfs_decompress_bio(int type, struct page **pages_in,
 				   u64 disk_start, struct bio *orig_bio,
 				   size_t srclen);
 
+static struct btrfs_compr_pool {
+	struct shrinker shrinker;
+	spinlock_t lock;
+	struct list_head list;
+	int count;
+	int thresh;
+} compr_pool;
+
+static unsigned long btrfs_compress_count(struct shrinker *sh,
+		struct shrink_control *sc)
+{
+	int ret;
+
+	/*
+	 * We must not read the values more than once if 'ret' gets expanded in
+	 * the return statement so we don't accidentally return a negative
+	 * number, even if the first condition finds it positive.
+	 */
+	ret = READ_ONCE(compr_pool.count) - READ_ONCE(compr_pool.thresh);
+
+	return ret > 0 ? ret : 0;
+}
+
+static unsigned long btrfs_compress_scan(struct shrinker *sh,
+		struct shrink_control *sc)
+{
+	struct list_head remove;
+	struct list_head *tmp, *next;
+	int freed;
+
+	if (!compr_pool.count)
+		return SHRINK_STOP;
+
+	INIT_LIST_HEAD(&remove);
+
+	/*
+	 * For now, just simply drain the whole list
+	 */
+	spin_lock(&compr_pool.lock);
+	list_splice_init(&compr_pool.list, &remove);
+	freed = compr_pool.count;
+	compr_pool.count = 0;
+	spin_unlock(&compr_pool.lock);
+
+	list_for_each_safe(tmp, next, &remove) {
+		struct page *page = list_entry(tmp, struct page, lru);
+
+		ASSERT(page_ref_count(page) == 1);
+		put_page(page);
+	}
+
+	return freed;
+}
+
 /*
  * Common wrappers for page allocation from compression wrappers
  */
 struct page* btrfs_alloc_compr_page(void)
 {
+	struct page *page = NULL;
+
+	spin_lock(&compr_pool.lock);
+	if (compr_pool.count > 0) {
+		page = list_first_entry(&compr_pool.list, struct page, lru);
+		list_del_init(&page->lru);
+		compr_pool.count--;
+	}
+	spin_unlock(&compr_pool.lock);
+
+	if (page)
+		return page;
+
 	return alloc_page(GFP_NOFS | __GFP_HIGHMEM);
 }
 
 void btrfs_free_compr_page(struct page *page)
 {
+	bool do_free = false;
+
+	spin_lock(&compr_pool.lock);
+	if (compr_pool.count > compr_pool.thresh) {
+		do_free = true;
+	} else {
+		list_add(&compr_pool.list, &page->lru);
+		compr_pool.count++;
+	}
+	spin_unlock(&compr_pool.lock);
+
+	if (!do_free)
+		return;
+
 	ASSERT(page_ref_count(page) == 1);
 	put_page(page);
 }
@@ -802,6 +884,17 @@ void __init btrfs_init_compress(void)
 			list_add(workspace, &btrfs_comp_ws[i].idle_ws);
 		}
 	}
+
+	spin_lock_init(&compr_pool.lock);
+	INIT_LIST_HEAD(&compr_pool.list);
+	compr_pool.count = 0;
+	/* 128k / 4k = 32, for 4 threads */
+	compr_pool.thresh = 32 * 4;
+	compr_pool.shrinker.count_objects = btrfs_compress_count;
+	compr_pool.shrinker.scan_objects = btrfs_compress_scan;
+	compr_pool.shrinker.seeks = DEFAULT_SEEKS;
+	compr_pool.shrinker.batch = 32;
+	register_shrinker(&compr_pool.shrinker);
 }
 
 /*
@@ -1015,6 +1108,9 @@ int btrfs_decompress(int type, unsigned char *data_in, struct page *dest_page,
 void btrfs_exit_compress(void)
 {
 	free_workspaces();
+
+	/* TODO: tear down shrinker */
+	unregister_shrinker(&compr_pool.shrinker);
 }
 
 /*
