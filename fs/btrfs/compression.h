@@ -34,6 +34,8 @@
 /* Maximum size of data before compression */
 #define BTRFS_MAX_UNCOMPRESSED		(SZ_128K)
 
+struct page;
+
 void btrfs_init_compress(void);
 void btrfs_exit_compress(void);
 
@@ -55,6 +57,9 @@ int btrfs_submit_compressed_write(struct inode *inode, u64 start,
 				  unsigned long nr_pages);
 int btrfs_submit_compressed_read(struct inode *inode, struct bio *bio,
 				 int mirror_num, unsigned long bio_flags);
+
+struct page* btrfs_alloc_compr_page(void);
+void btrfs_free_compr_page(struct page *page);
 
 enum btrfs_compression_type {
 	BTRFS_COMPRESS_NONE  = 0,

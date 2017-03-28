@@ -85,6 +85,20 @@ static int btrfs_decompress_bio(int type, struct page **pages_in,
 				   u64 disk_start, struct bio *orig_bio,
 				   size_t srclen);
 
+/*
+ * Common wrappers for page allocation from compression wrappers
+ */
+struct page* btrfs_alloc_compr_page(void)
+{
+	return alloc_page(GFP_NOFS | __GFP_HIGHMEM);
+}
+
+void btrfs_free_compr_page(struct page *page)
+{
+	ASSERT(page_ref_count(page) == 1);
+	put_page(page);
+}
+
 static inline int compressed_bio_size(struct btrfs_fs_info *fs_info,
 				      unsigned long disk_size)
 {
