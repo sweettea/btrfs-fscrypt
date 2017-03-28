@@ -615,7 +615,7 @@ cont:
 		 */
 		for (i = 0; i < nr_pages; i++) {
 			WARN_ON(pages[i]->mapping);
-			put_page(pages[i]);
+			btrfs_free_compr_page(pages[i]);
 		}
 		kfree(pages);
 		pages = NULL;
@@ -651,7 +651,7 @@ cleanup_and_bail_uncompressed:
 free_pages_out:
 	for (i = 0; i < nr_pages; i++) {
 		WARN_ON(pages[i]->mapping);
-		put_page(pages[i]);
+		btrfs_free_compr_page(pages[i]);
 	}
 	kfree(pages);
 }
@@ -665,6 +665,7 @@ static void free_async_extent_pages(struct async_extent *async_extent)
 
 	for (i = 0; i < async_extent->nr_pages; i++) {
 		WARN_ON(async_extent->pages[i]->mapping);
+		/* TODO: not sure, can be compr_free as well */
 		put_page(async_extent->pages[i]);
 	}
 	kfree(async_extent->pages);

@@ -201,7 +201,7 @@ csum_failed:
 	for (index = 0; index < cb->nr_pages; index++) {
 		page = cb->compressed_pages[index];
 		page->mapping = NULL;
-		put_page(page);
+		btrfs_free_compr_page(page);
 	}
 
 	/* do io completion on the original bio */
@@ -315,7 +315,7 @@ static void end_compressed_bio_write(struct bio *bio)
 	for (index = 0; index < cb->nr_pages; index++) {
 		page = cb->compressed_pages[index];
 		page->mapping = NULL;
-		put_page(page);
+		btrfs_free_compr_page(page);
 	}
 
 	/* finally free the cb struct */
