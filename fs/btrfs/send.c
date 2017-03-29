@@ -4849,6 +4849,7 @@ static int send_hole(struct send_ctx *sctx, u64 end)
 	u64 offset = sctx->cur_inode_last_extent;
 	u64 len;
 	int ret = 0;
+	int off;
 
 	p = fs_path_alloc();
 	if (!p)
@@ -4856,7 +4857,9 @@ static int send_hole(struct send_ctx *sctx, u64 end)
 	ret = get_cur_path(sctx, sctx->cur_ino, sctx->cur_inode_gen, p);
 	if (ret < 0)
 		goto tlv_put_failure;
-	memset(sctx->read_buf, 0, BTRFS_SEND_READ_SIZE);
+	BUILD_BUG_ON(BTRFS_SEND_READ_SIZE % PAGE_SIZE);
+	for (off = 0; off < BTRFS_SEND_READ_SIZE; off += PAGE_SIZE)
+		clear_page(sctx->read_buf + off);
 	while (offset < end) {
 		len = min_t(u64, end - offset, BTRFS_SEND_READ_SIZE);
 
