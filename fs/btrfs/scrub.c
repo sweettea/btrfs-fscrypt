@@ -182,7 +182,6 @@ struct scrub_ctx {
 
 	struct scrub_bio        *wr_curr_bio;
 	struct mutex            wr_lock;
-	int                     pages_per_wr_bio; /* <= SCRUB_PAGES_PER_WR_BIO */
 	atomic_t                flush_all_writes;
 	struct btrfs_device     *wr_tgtdev;
 
@@ -718,7 +717,6 @@ struct scrub_ctx *scrub_setup_ctx(struct btrfs_device *dev, int is_dev_replace)
 	sctx->wr_curr_bio = NULL;
 	if (is_dev_replace) {
 		WARN_ON(!dev->bdev);
-		sctx->pages_per_wr_bio = SCRUB_PAGES_PER_WR_BIO;
 		sctx->wr_tgtdev = dev;
 		atomic_set(&sctx->flush_all_writes, 0);
 	}
@@ -1918,7 +1916,7 @@ again:
 		bio = sbio->bio;
 		if (!bio) {
 			bio = btrfs_io_bio_alloc(GFP_KERNEL,
-					sctx->pages_per_wr_bio);
+					SCRUB_PAGES_PER_WR_BIO);
 			if (!bio) {
 				mutex_unlock(&sctx->wr_lock);
 				return -ENOMEM;
@@ -1955,7 +1953,7 @@ again:
 	sbio->pagev[sbio->page_count] = spage;
 	scrub_page_get(spage);
 	sbio->page_count++;
-	if (sbio->page_count == sctx->pages_per_wr_bio)
+	if (sbio->page_count == SCRUB_PAGES_PER_WR_BIO)
 		scrub_wr_submit(sctx);
 	mutex_unlock(&sctx->wr_lock);
 
