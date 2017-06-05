@@ -2395,7 +2395,9 @@ static int __init init_btrfs_fs(void)
 	if (err)
 		return err;
 
-	btrfs_init_compress();
+	err = btrfs_init_compress();
+	if (err)
+		goto free_sysfs;
 
 	err = btrfs_init_cachep();
 	if (err)
@@ -2473,6 +2475,7 @@ free_cachep:
 	btrfs_destroy_cachep();
 free_compress:
 	btrfs_exit_compress();
+free_sysfs:
 	btrfs_exit_sysfs();
 
 	return err;

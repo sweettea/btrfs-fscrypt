@@ -21,6 +21,7 @@
 #include <linux/slab.h>
 #include <linux/sched/mm.h>
 #include <linux/log2.h>
+#include <linux/mutex.h>
 #include "ctree.h"
 #include "disk-io.h"
 #include "transaction.h"
@@ -45,6 +46,9 @@ const char* btrfs_compress_type2str(enum btrfs_compression_type type)
 
 	return NULL;
 }
+
+static struct mutex emerg_inline_buffer_lock;
+static char *emerg_inline_buffer;
 
 static int btrfs_decompress_bio(struct compressed_bio *cb);
 
@@ -806,10 +810,17 @@ static const struct btrfs_compress_op * const btrfs_compress_op[] = {
 	&btrfs_zstd_compress,
 };
 
-void __init btrfs_init_compress(void)
+int __init btrfs_init_compress(void)
 {
 	struct list_head *workspace;
 	int i;
+
+	mutex_init(&emerg_inline_buffer_lock);
+	emerg_inline_buffer = kzalloc(PAGE_SIZE, GFP_KERNEL);
+	if (!emerg_inline_buffer) {
+		pr_warn("BTRFS: cannot preallocate emergency inline buffer");
+		return -ENOMEM;
+	}
 
 	INIT_LIST_HEAD(&btrfs_heuristic_ws.idle_ws);
 	spin_lock_init(&btrfs_heuristic_ws.ws_lock);
@@ -845,6 +856,8 @@ void __init btrfs_init_compress(void)
 			list_add(workspace, &btrfs_comp_ws[i].idle_ws);
 		}
 	}
+
+	return 0;
 }
 
 /*
@@ -1123,6 +1136,7 @@ int btrfs_decompress(int type, unsigned char *data_in, struct page *dest_page,
 void __cold btrfs_exit_compress(void)
 {
 	free_workspaces();
+	kzfree(emerg_inline_buffer);
 }
 
 /*
@@ -1616,4 +1630,28 @@ unsigned int btrfs_compress_str2level(const char *str)
 		return str[5] - '0';
 
 	return BTRFS_ZLIB_DEFAULT_LEVEL;
+}
+
+void btrfs_compress_get_tmp_inline_buffer(char **buf, unsigned long size)
+{
+	ASSERT(size <= PAGE_SIZE);
+	*buf = kmalloc(size, GFP_NOFS);
+	if (*buf)
+		return;
+
+	/* We can't really continue, callers rely on validity of buf */
+	BUG_ON(!emerg_inline_buffer);
+
+	mutex_lock(&emerg_inline_buffer_lock);
+	*buf = emerg_inline_buffer;
+}
+
+void btrfs_compress_put_tmp_inline_buffer(const char *buf)
+{
+	if (buf != emerg_inline_buffer) {
+		kfree(buf);
+		return;
+	}
+
+	mutex_unlock(&emerg_inline_buffer_lock);
 }
