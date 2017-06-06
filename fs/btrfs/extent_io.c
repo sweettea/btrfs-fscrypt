@@ -2874,6 +2874,8 @@ __get_extent_map(struct inode *inode, struct page *page, size_t pg_offset,
  * handlers)
  * XXX JDM: This needs looking at to ensure proper page locking
  * return 0 on success, otherwise return error
+ *
+ * @prev_em_start:	return value of previous em start value; must be valid
  */
 static int __do_readpage(struct extent_io_tree *tree,
 			 struct page *page,
@@ -2901,6 +2903,8 @@ static int __do_readpage(struct extent_io_tree *tree,
 	size_t disk_io_size;
 	size_t blocksize = inode->i_sb->s_blocksize;
 	unsigned long this_bio_flag = 0;
+
+	ASSERT(prev_em_start);
 
 	set_page_extent_mapped(page);
 
@@ -3012,12 +3016,11 @@ static int __do_readpage(struct extent_io_tree *tree,
 		 * non-optimal behavior (submitting 2 bios for the same extent).
 		 */
 		if (test_bit(EXTENT_FLAG_COMPRESSED, &em->flags) &&
-		    prev_em_start && *prev_em_start != (u64)-1 &&
+		    *prev_em_start != (u64)-1 &&
 		    *prev_em_start != em->orig_start)
 			force_bio_submit = true;
 
-		if (prev_em_start)
-			*prev_em_start = em->orig_start;
+		*prev_em_start = em->orig_start;
 
 		free_extent_map(em);
 		em = NULL;
