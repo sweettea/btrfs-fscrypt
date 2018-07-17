@@ -1939,6 +1939,8 @@ static blk_status_t btrfs_submit_bio_start(void *private_data, struct bio *bio,
  *
  * At IO completion time the cums attached on the ordered extent record
  * are inserted into the btree
+ *
+ * used for data and metadata
  */
 blk_status_t btrfs_submit_bio_done(void *private_data, struct bio *bio,
 			  int mirror_num)
@@ -1947,6 +1949,10 @@ blk_status_t btrfs_submit_bio_done(void *private_data, struct bio *bio,
 	struct btrfs_fs_info *fs_info = btrfs_sb(inode->i_sb);
 	blk_status_t ret;
 
+	/*
+	 * when we're called for a write, we're already in the async
+	 * submission context.  Just jump into btrfs_map_bio
+	 */
 	ret = btrfs_map_bio(fs_info, bio, mirror_num, 1);
 	if (ret) {
 		bio->bi_status = ret;
