@@ -267,7 +267,6 @@ struct btrfs_io_bio {
 	u64 logical;
 	u8 *csum;
 	u8 csum_inline[BTRFS_BIO_INLINE_CSUM_SIZE];
-	u8 *csum_allocated;
 	struct bvec_iter iter;
 	/*
 	 * This member must come last, bio_alloc_bioset will allocate enough
@@ -283,8 +282,10 @@ static inline struct btrfs_io_bio *btrfs_io_bio(struct bio *bio)
 
 static inline void btrfs_io_bio_free_csum(struct btrfs_io_bio *io_bio)
 {
-	if (io_bio->csum == io_bio->csum_allocated)
-		kfree(io_bio->csum_allocated);
+	if (io_bio->csum != io_bio->csum_inline) {
+		kfree(io_bio->csum);
+		io_bio->csum = NULL;
+	}
 }
 
 struct btrfs_bio_stripe {
