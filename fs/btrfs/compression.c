@@ -231,7 +231,6 @@ static void end_compressed_bio_write(struct bio *bio)
 {
 	struct extent_io_tree *tree;
 	struct compressed_bio *cb = bio->bi_private;
-	struct inode *inode;
 	struct page *page;
 	unsigned long index;
 
@@ -247,8 +246,7 @@ static void end_compressed_bio_write(struct bio *bio)
 	/* ok, we're the last bio for this extent, step one is to
 	 * call back into the FS and do all the end_io operations
 	 */
-	inode = cb->inode;
-	tree = &BTRFS_I(inode)->io_tree;
+	tree = &BTRFS_I(cb->inode)->io_tree;
 	cb->compressed_pages[0]->mapping = cb->inode->i_mapping;
 	tree->ops->writepage_end_io_hook(cb->compressed_pages[0],
 					 cb->start,
@@ -258,7 +256,7 @@ static void end_compressed_bio_write(struct bio *bio)
 					 BLK_STS_OK : BLK_STS_NOTSUPP);
 	cb->compressed_pages[0]->mapping = NULL;
 
-	end_compressed_writeback(inode, cb);
+	end_compressed_writeback(cb->inode, cb);
 	/* note, our inode could be gone now */
 
 	/*
