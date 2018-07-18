@@ -2381,8 +2381,8 @@ static int bio_readpage_error(struct bio *failed_bio, u64 phy_offset,
 		"Repair Read Error: submitting new read[%#x] to this_mirror=%d, in_validation=%d",
 		read_mode, failrec->this_mirror, failrec->in_validation);
 
-	status = tree->ops->submit_bio_hook(tree->private_data, bio, failrec->this_mirror,
-					 failrec->bio_flags, 0);
+	status = submit_bio_hook(tree, tree->private_data, bio,
+			failrec->this_mirror, failrec->bio_flags, 0);
 	if (status) {
 		free_io_failure(failure_tree, tree, failrec);
 		bio_put(bio);
@@ -2709,8 +2709,8 @@ static int __must_check submit_one_bio(struct bio *bio, int mirror_num,
 	bio->bi_private = NULL;
 
 	if (tree->ops)
-		ret = tree->ops->submit_bio_hook(tree->private_data, bio,
-					   mirror_num, bio_flags, start);
+		ret = submit_bio_hook(tree, tree->private_data, bio,
+				mirror_num, bio_flags, start);
 	else
 		btrfsic_submit_bio(bio);
 

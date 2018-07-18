@@ -1943,7 +1943,7 @@ static blk_status_t btrfs_submit_bio_start(void *private_data, struct bio *bio,
  *
  *    c-3) otherwise:			async submit
  */
-static blk_status_t btrfs_submit_bio_hook(void *private_data, struct bio *bio,
+blk_status_t btrfs_submit_bio_hook(void *private_data, struct bio *bio,
 				 int mirror_num, unsigned long bio_flags,
 				 u64 bio_offset)
 {
@@ -10471,7 +10471,6 @@ static const struct file_operations btrfs_dir_file_operations = {
 
 static const struct extent_io_ops btrfs_extent_io_ops = {
 	.is_data = true,
-	.submit_bio_hook = btrfs_submit_bio_hook,
 };
 
 /*

@@ -873,9 +873,8 @@ static int check_async_write(struct btrfs_inode *bi)
 	return 1;
 }
 
-static blk_status_t btree_submit_bio_hook(void *private_data, struct bio *bio,
-					  int mirror_num, unsigned long bio_flags,
-					  u64 bio_offset)
+blk_status_t btree_submit_bio_hook(void *private_data, struct bio *bio,
+		int mirror_num, unsigned long bio_flags, u64 bio_offset)
 {
 	struct inode *inode = private_data;
 	struct btrfs_fs_info *fs_info = btrfs_sb(inode->i_sb);
@@ -4543,5 +4542,4 @@ static int btrfs_cleanup_transaction(struct btrfs_fs_info *fs_info)
 
 static const struct extent_io_ops btree_extent_io_ops = {
 	.is_data = false,
-	.submit_bio_hook = btree_submit_bio_hook,
 };

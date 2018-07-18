@@ -85,16 +85,11 @@ struct btrfs_inode;
 struct btrfs_io_bio;
 struct io_failure_record;
 
-typedef	blk_status_t (extent_submit_bio_hook_t)(void *private_data, struct bio *bio,
-				       int mirror_num, unsigned long bio_flags,
-				       u64 bio_offset);
-
 typedef blk_status_t (extent_submit_bio_start_t)(void *private_data,
 		struct bio *bio, u64 bio_offset);
 
 struct extent_io_ops {
 	bool is_data;
-	extent_submit_bio_hook_t *submit_bio_hook;
 };
 
 struct extent_io_tree {
@@ -140,6 +135,13 @@ int btree_readpage_end_io_hook(struct btrfs_io_bio *io_bio, u64 phy_offset,
 int btrfs_readpage_end_io_hook(struct btrfs_io_bio *io_bio, u64 phy_offset,
 		struct page *page, u64 start, u64 end, int mirror);
 
+blk_status_t btree_submit_bio_hook(void *private_data, struct bio *bio,
+		int mirror_num, unsigned long bio_flags, u64 bio_offset);
+
+blk_status_t btrfs_submit_bio_hook(void *private_data, struct bio *bio,
+				 int mirror_num, unsigned long bio_flags,
+				 u64 bio_offset);
+
 static inline void writepage_end_io_hook(struct extent_io_tree *tree,
 		struct page *page, u64 start, u64 end,
 		struct extent_state *state, int uptodate)
@@ -168,6 +170,19 @@ static inline int readpage_end_io_hook(struct extent_io_tree *tree,
 	else
 		return btree_readpage_end_io_hook(io_bio, phy_offset, page,
 				start, end, mirror);
+}
+
+static inline blk_status_t submit_bio_hook(struct extent_io_tree *tree,
+		void *private_data, struct bio *bio, int mirror_num,
+		unsigned long bio_flags, u64 bio_offset)
+{
+	BUG_ON(!tree->ops);
+	if (tree->ops->is_data)
+		return btrfs_submit_bio_hook(private_data, bio, mirror_num,
+				bio_flags, bio_offset);
+	else
+		return btree_submit_bio_hook(private_data, bio, mirror_num,
+				bio_flags, bio_offset);
 }
 
 struct extent_state {
