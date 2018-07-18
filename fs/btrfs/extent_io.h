@@ -117,9 +117,6 @@ struct extent_io_ops {
 	void (*clear_bit_hook)(void *private_data,
 			struct extent_state *state,
 			unsigned *bits);
-	void (*merge_extent_hook)(void *private_data,
-				  struct extent_state *new,
-				  struct extent_state *other);
 	void (*split_extent_hook)(void *private_data,
 				  struct extent_state *orig, u64 split);
 	void (*check_extent_io_range)(void *private_data, const char *caller,
@@ -140,6 +137,9 @@ void btrfs_writepage_end_io_hook(struct page *page, u64 start, u64 end,
 				struct extent_state *state, int uptodate);
 
 int btrfs_writepage_start_hook(struct page *page, u64 start, u64 end);
+
+void btrfs_merge_extent_hook(void *private_data, struct extent_state *new,
+				    struct extent_state *other);
 
 static inline void writepage_end_io_hook(struct extent_io_tree *tree,
 		struct page *page, u64 start, u64 end,

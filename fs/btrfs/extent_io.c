@@ -344,11 +344,11 @@ static inline struct rb_node *tree_search(struct extent_io_tree *tree,
 	return tree_search_for_insert(tree, offset, NULL, NULL);
 }
 
-static void merge_cb(struct extent_io_tree *tree, struct extent_state *new,
+static void merge_extent_hook(struct extent_io_tree *tree, struct extent_state *new,
 		     struct extent_state *other)
 {
-	if (tree->ops && tree->ops->merge_extent_hook)
-		tree->ops->merge_extent_hook(tree->private_data, new, other);
+	if (tree->ops && tree->ops->is_data)
+		btrfs_merge_extent_hook(tree->private_data, new, other);
 }
 
 /*
@@ -374,7 +374,7 @@ static void merge_state(struct extent_io_tree *tree,
 		other = rb_entry(other_node, struct extent_state, rb_node);
 		if (other->end == state->start - 1 &&
 		    other->state == state->state) {
-			merge_cb(tree, state, other);
+			merge_extent_hook(tree, state, other);
 			state->start = other->start;
 			rb_erase(&other->rb_node, &tree->state);
 			RB_CLEAR_NODE(&other->rb_node);
@@ -386,7 +386,7 @@ static void merge_state(struct extent_io_tree *tree,
 		other = rb_entry(other_node, struct extent_state, rb_node);
 		if (other->start == state->end + 1 &&
 		    other->state == state->state) {
-			merge_cb(tree, state, other);
+			merge_extent_hook(tree, state, other);
 			state->end = other->end;
 			rb_erase(&other->rb_node, &tree->state);
 			RB_CLEAR_NODE(&other->rb_node);

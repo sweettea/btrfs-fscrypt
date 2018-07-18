@@ -1643,8 +1643,7 @@ static void btrfs_split_extent_hook(void *private_data,
  * extents, such as when we are doing sequential writes, so we can properly
  * account for the metadata space we'll need.
  */
-static void btrfs_merge_extent_hook(void *private_data,
-				    struct extent_state *new,
+void btrfs_merge_extent_hook(void *private_data, struct extent_state *new,
 				    struct extent_state *other)
 {
 	struct inode *inode = private_data;
@@ -10489,7 +10488,6 @@ static const struct extent_io_ops btrfs_extent_io_ops = {
 	.fill_delalloc = run_delalloc_range,
 	.set_bit_hook = btrfs_set_bit_hook,
 	.clear_bit_hook = btrfs_clear_bit_hook,
-	.merge_extent_hook = btrfs_merge_extent_hook,
 	.split_extent_hook = btrfs_split_extent_hook,
 	.check_extent_io_range = btrfs_check_extent_io_range,
 };
