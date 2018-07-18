@@ -89,8 +89,8 @@ void btrfs_leak_debug_check(void)
 static inline void __btrfs_debug_check_extent_io_range(const char *caller,
 		struct extent_io_tree *tree, u64 start, u64 end)
 {
-	if (tree->ops && tree->ops->check_extent_io_range)
-		tree->ops->check_extent_io_range(tree->private_data, caller,
+	if (tree->ops && tree->ops->is_data)
+		btrfs_check_extent_io_range(tree->private_data, caller,
 						 start, end);
 }
 #else

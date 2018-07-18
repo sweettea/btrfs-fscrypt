@@ -10408,7 +10408,7 @@ static int btrfs_readpage_io_failed_hook(struct page *page, int failed_mirror)
 	return -EAGAIN;
 }
 
-static void btrfs_check_extent_io_range(void *private_data, const char *caller,
+void btrfs_check_extent_io_range(void *private_data, const char *caller,
 					u64 start, u64 end)
 {
 	struct inode *inode = private_data;
@@ -10485,7 +10485,6 @@ static const struct extent_io_ops btrfs_extent_io_ops = {
 
 	/* optional callbacks */
 	.fill_delalloc = run_delalloc_range,
-	.check_extent_io_range = btrfs_check_extent_io_range,
 };
 
 /*
