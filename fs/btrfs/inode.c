@@ -1754,8 +1754,8 @@ static void btrfs_del_delalloc_inode(struct btrfs_root *root,
  * bytes in this file, and to maintain the list of inodes that
  * have pending delalloc work to be done.
  */
-static void btrfs_set_bit_hook(void *private_data,
-			       struct extent_state *state, unsigned *bits)
+void btrfs_set_bit_hook(void *private_data, struct extent_state *state,
+			unsigned *bits)
 {
 	struct inode *inode = private_data;
 
@@ -10486,7 +10486,6 @@ static const struct extent_io_ops btrfs_extent_io_ops = {
 
 	/* optional callbacks */
 	.fill_delalloc = run_delalloc_range,
-	.set_bit_hook = btrfs_set_bit_hook,
 	.clear_bit_hook = btrfs_clear_bit_hook,
 	.check_extent_io_range = btrfs_check_extent_io_range,
 };
