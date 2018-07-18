@@ -2534,9 +2534,8 @@ static void end_bio_extent_readpage(struct bio *bio)
 
 		mirror = io_bio->mirror_num;
 		if (likely(uptodate && tree->ops)) {
-			ret = tree->ops->readpage_end_io_hook(io_bio, offset,
-							      page, start, end,
-							      mirror);
+			ret = readpage_end_io_hook(tree, io_bio, offset, page,
+					start, end, mirror);
 			if (ret)
 				uptodate = 0;
 			else

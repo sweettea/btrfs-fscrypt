@@ -95,9 +95,6 @@ typedef blk_status_t (extent_submit_bio_start_t)(void *private_data,
 struct extent_io_ops {
 	bool is_data;
 	extent_submit_bio_hook_t *submit_bio_hook;
-	int (*readpage_end_io_hook)(struct btrfs_io_bio *io_bio, u64 phy_offset,
-				    struct page *page, u64 start, u64 end,
-				    int mirror);
 };
 
 struct extent_io_tree {
@@ -137,6 +134,12 @@ int btrfs_fill_delalloc_range(void *private_data, struct page *locked_page,
 
 int btree_io_failed_hook(struct page *page, int failed_mirror);
 
+int btree_readpage_end_io_hook(struct btrfs_io_bio *io_bio, u64 phy_offset,
+		struct page *page, u64 start, u64 end, int mirror);
+
+int btrfs_readpage_end_io_hook(struct btrfs_io_bio *io_bio, u64 phy_offset,
+		struct page *page, u64 start, u64 end, int mirror);
+
 static inline void writepage_end_io_hook(struct extent_io_tree *tree,
 		struct page *page, u64 start, u64 end,
 		struct extent_state *state, int uptodate)
@@ -152,6 +155,19 @@ static inline int readpage_io_failed_hook(struct extent_io_tree *tree,
 	if (tree->ops->is_data)
 		return -EAGAIN;
 	return btree_io_failed_hook(page, failed_mirror);
+}
+
+static inline int readpage_end_io_hook(struct extent_io_tree *tree,
+		struct btrfs_io_bio *io_bio, u64 phy_offset, struct page *page,
+		u64 start, u64 end, int mirror)
+{
+	BUG_ON(!tree->ops);
+	if (tree->ops->is_data)
+		return btrfs_readpage_end_io_hook(io_bio, phy_offset, page,
+				start, end, mirror);
+	else
+		return btree_readpage_end_io_hook(io_bio, phy_offset, page,
+				start, end, mirror);
 }
 
 struct extent_state {

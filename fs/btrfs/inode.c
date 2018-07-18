@@ -3184,9 +3184,8 @@ zeroit:
  * if there's a match, we allow the bio to finish.  If not, the code in
  * extent_io.c will try to find good copies for us.
  */
-static int btrfs_readpage_end_io_hook(struct btrfs_io_bio *io_bio,
-				      u64 phy_offset, struct page *page,
-				      u64 start, u64 end, int mirror)
+int btrfs_readpage_end_io_hook(struct btrfs_io_bio *io_bio, u64 phy_offset,
+		struct page *page, u64 start, u64 end, int mirror)
 {
 	size_t offset = start - page_offset(page);
 	struct inode *inode = page->mapping->host;
@@ -10473,7 +10472,6 @@ static const struct file_operations btrfs_dir_file_operations = {
 static const struct extent_io_ops btrfs_extent_io_ops = {
 	.is_data = true,
 	.submit_bio_hook = btrfs_submit_bio_hook,
-	.readpage_end_io_hook = btrfs_readpage_end_io_hook,
 };
 
 /*
