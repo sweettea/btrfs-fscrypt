@@ -395,13 +395,6 @@ static void merge_state(struct extent_io_tree *tree,
 	}
 }
 
-static void clear_state_cb(struct extent_io_tree *tree,
-			   struct extent_state *state, unsigned *bits)
-{
-	if (tree->ops && tree->ops->clear_bit_hook)
-		tree->ops->clear_bit_hook(tree->private_data, state, bits);
-}
-
 static void set_state_bits(struct extent_io_tree *tree,
 			   struct extent_state *state, unsigned *bits,
 			   struct extent_changeset *changeset);
@@ -510,7 +503,10 @@ static struct extent_state *clear_state_bit(struct extent_io_tree *tree,
 		WARN_ON(range > tree->dirty_bytes);
 		tree->dirty_bytes -= range;
 	}
-	clear_state_cb(tree, state, bits);
+
+	if (tree->ops && tree->ops->is_data)
+		btrfs_clear_bit_hook(tree->private_data, state, bits);
+
 	ret = add_extent_changeset(state, bits_to_clear, changeset, 0);
 	BUG_ON(ret < 0);
 	state->state &= ~bits_to_clear;

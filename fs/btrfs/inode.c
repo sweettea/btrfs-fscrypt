@@ -1806,9 +1806,8 @@ void btrfs_set_bit_hook(void *private_data, struct extent_state *state,
 /*
  * extent_io.c clear_bit_hook, see set_bit_hook for why
  */
-static void btrfs_clear_bit_hook(void *private_data,
-				 struct extent_state *state,
-				 unsigned *bits)
+void btrfs_clear_bit_hook(void *private_data, struct extent_state *state,
+			unsigned *bits)
 {
 	struct btrfs_inode *inode = BTRFS_I((struct inode *)private_data);
 	struct btrfs_fs_info *fs_info = btrfs_sb(inode->vfs_inode.i_sb);
@@ -10486,7 +10485,6 @@ static const struct extent_io_ops btrfs_extent_io_ops = {
 
 	/* optional callbacks */
 	.fill_delalloc = run_delalloc_range,
-	.clear_bit_hook = btrfs_clear_bit_hook,
 	.check_extent_io_range = btrfs_check_extent_io_range,
 };
 

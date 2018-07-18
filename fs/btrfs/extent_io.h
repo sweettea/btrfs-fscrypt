@@ -112,9 +112,6 @@ struct extent_io_ops {
 			     unsigned long *nr_written,
 			     struct writeback_control *wbc);
 
-	void (*clear_bit_hook)(void *private_data,
-			struct extent_state *state,
-			unsigned *bits);
 	void (*check_extent_io_range)(void *private_data, const char *caller,
 				      u64 start, u64 end);
 };
@@ -141,6 +138,9 @@ void btrfs_split_extent_hook(void *private_data, struct extent_state *orig,
 				u64 split);
 
 void btrfs_set_bit_hook(void *private_data, struct extent_state *state,
+			unsigned *bits);
+
+void btrfs_clear_bit_hook(void *private_data, struct extent_state *state,
 			unsigned *bits);
 
 static inline void writepage_end_io_hook(struct extent_io_tree *tree,
