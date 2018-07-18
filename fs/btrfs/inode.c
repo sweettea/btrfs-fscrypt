@@ -1605,8 +1605,8 @@ static int run_delalloc_range(void *private_data, struct page *locked_page,
 	return ret;
 }
 
-static void btrfs_split_extent_hook(void *private_data,
-				    struct extent_state *orig, u64 split)
+void btrfs_split_extent_hook(void *private_data, struct extent_state *orig,
+				u64 split)
 {
 	struct inode *inode = private_data;
 	u64 size;
@@ -10488,7 +10488,6 @@ static const struct extent_io_ops btrfs_extent_io_ops = {
 	.fill_delalloc = run_delalloc_range,
 	.set_bit_hook = btrfs_set_bit_hook,
 	.clear_bit_hook = btrfs_clear_bit_hook,
-	.split_extent_hook = btrfs_split_extent_hook,
 	.check_extent_io_range = btrfs_check_extent_io_range,
 };
 
