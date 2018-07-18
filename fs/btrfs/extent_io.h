@@ -88,8 +88,10 @@ struct io_failure_record;
 typedef blk_status_t (extent_submit_bio_start_t)(void *private_data,
 		struct bio *bio, u64 bio_offset);
 
-struct extent_io_ops {
-	bool is_data;
+enum btrfs_io_tree_type {
+	BTRFS_IO_TREE_NONE,
+	BTRFS_IO_TREE_DATA,
+	BTRFS_IO_TREE_METADATA,
 };
 
 struct extent_io_tree {
@@ -98,7 +100,7 @@ struct extent_io_tree {
 	u64 dirty_bytes;
 	int track_uptodate;
 	spinlock_t lock;
-	const struct extent_io_ops *ops;
+	enum btrfs_io_tree_type type;
 };
 
 /* inode.c, find better place */
@@ -146,43 +148,53 @@ static inline void writepage_end_io_hook(struct extent_io_tree *tree,
 		struct page *page, u64 start, u64 end,
 		struct extent_state *state, int uptodate)
 {
-	if (tree->ops && tree->ops->is_data)
+	if (tree->type == BTRFS_IO_TREE_DATA)
 		btrfs_writepage_end_io_hook(page, start, end, state, uptodate);
 }
 
 static inline int readpage_io_failed_hook(struct extent_io_tree *tree,
 		struct page *page, int failed_mirror)
 {
-	BUG_ON(!tree->ops);
-	if (tree->ops->is_data)
+	switch (tree->type) {
+	case BTRFS_IO_TREE_DATA:
 		return -EAGAIN;
-	return btree_io_failed_hook(page, failed_mirror);
+	case BTRFS_IO_TREE_METADATA:
+		return btree_io_failed_hook(page, failed_mirror);
+	default:
+		BUG();
+	}
 }
 
 static inline int readpage_end_io_hook(struct extent_io_tree *tree,
 		struct btrfs_io_bio *io_bio, u64 phy_offset, struct page *page,
 		u64 start, u64 end, int mirror)
 {
-	BUG_ON(!tree->ops);
-	if (tree->ops->is_data)
+	switch (tree->type) {
+	case BTRFS_IO_TREE_DATA:
 		return btrfs_readpage_end_io_hook(io_bio, phy_offset, page,
 				start, end, mirror);
-	else
+	case BTRFS_IO_TREE_METADATA:
 		return btree_readpage_end_io_hook(io_bio, phy_offset, page,
 				start, end, mirror);
+	default:
+		BUG();
+	}
 }
 
 static inline blk_status_t submit_bio_hook(struct extent_io_tree *tree,
 		void *private_data, struct bio *bio, int mirror_num,
 		unsigned long bio_flags, u64 bio_offset)
 {
-	BUG_ON(!tree->ops);
-	if (tree->ops->is_data)
+	switch (tree->type) {
+	case BTRFS_IO_TREE_DATA:
 		return btrfs_submit_bio_hook(private_data, bio, mirror_num,
 				bio_flags, bio_offset);
-	else
+	case BTRFS_IO_TREE_METADATA:
 		return btree_submit_bio_hook(private_data, bio, mirror_num,
 				bio_flags, bio_offset);
+	default:
+		BUG();
+	}
 }
 
 struct extent_state {

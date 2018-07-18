@@ -50,7 +50,6 @@
 				 BTRFS_SUPER_FLAG_METADUMP |\
 				 BTRFS_SUPER_FLAG_METADUMP_V2)
 
-static const struct extent_io_ops btree_extent_io_ops;
 static void end_workqueue_fn(struct btrfs_work *work);
 static void btrfs_destroy_ordered_extents(struct btrfs_root *root);
 static int btrfs_destroy_delayed_refs(struct btrfs_transaction *trans,
@@ -2163,8 +2162,7 @@ static void btrfs_init_btree_inode(struct btrfs_fs_info *fs_info)
 	BTRFS_I(inode)->io_tree.track_uptodate = 0;
 	extent_map_tree_init(&BTRFS_I(inode)->extent_tree);
 
-	BTRFS_I(inode)->io_tree.ops = &btree_extent_io_ops;
-
+	BTRFS_I(inode)->io_tree.type = BTRFS_IO_TREE_METADATA;
 	BTRFS_I(inode)->root = fs_info->tree_root;
 	memset(&BTRFS_I(inode)->location, 0, sizeof(struct btrfs_key));
 	set_bit(BTRFS_INODE_DUMMY, &BTRFS_I(inode)->runtime_flags);
@@ -4539,7 +4537,3 @@ static int btrfs_cleanup_transaction(struct btrfs_fs_info *fs_info)
 
 	return 0;
 }
-
-static const struct extent_io_ops btree_extent_io_ops = {
-	.is_data = false,
-};

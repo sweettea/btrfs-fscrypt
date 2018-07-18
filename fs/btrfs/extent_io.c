@@ -89,7 +89,7 @@ void btrfs_leak_debug_check(void)
 static inline void __btrfs_debug_check_extent_io_range(const char *caller,
 		struct extent_io_tree *tree, u64 start, u64 end)
 {
-	if (tree->ops && tree->ops->is_data)
+	if (tree->type == BTRFS_IO_TREE_DATA)
 		btrfs_check_extent_io_range(tree->private_data, caller,
 						 start, end);
 }
@@ -195,7 +195,7 @@ void extent_io_tree_init(struct extent_io_tree *tree,
 			 void *private_data)
 {
 	tree->state = RB_ROOT;
-	tree->ops = NULL;
+	tree->type = BTRFS_IO_TREE_NONE;
 	tree->dirty_bytes = 0;
 	spin_lock_init(&tree->lock);
 	tree->private_data = private_data;
@@ -347,7 +347,7 @@ static inline struct rb_node *tree_search(struct extent_io_tree *tree,
 static void merge_extent_hook(struct extent_io_tree *tree, struct extent_state *new,
 		     struct extent_state *other)
 {
-	if (tree->ops && tree->ops->is_data)
+	if (tree->type == BTRFS_IO_TREE_DATA)
 		btrfs_merge_extent_hook(tree->private_data, new, other);
 }
 
@@ -456,7 +456,7 @@ static int split_state(struct extent_io_tree *tree, struct extent_state *orig,
 {
 	struct rb_node *node;
 
-	if (tree->ops && tree->ops->is_data)
+	if (tree->type == BTRFS_IO_TREE_DATA)
 		btrfs_split_extent_hook(tree->private_data, orig, split);
 
 	prealloc->start = orig->start;
@@ -504,7 +504,7 @@ static struct extent_state *clear_state_bit(struct extent_io_tree *tree,
 		tree->dirty_bytes -= range;
 	}
 
-	if (tree->ops && tree->ops->is_data)
+	if (tree->type == BTRFS_IO_TREE_DATA)
 		btrfs_clear_bit_hook(tree->private_data, state, bits);
 
 	ret = add_extent_changeset(state, bits_to_clear, changeset, 0);
@@ -783,7 +783,7 @@ static void set_state_bits(struct extent_io_tree *tree,
 	unsigned bits_to_set = *bits & ~EXTENT_CTLBITS;
 	int ret;
 
-	if (tree->ops && tree->ops->is_data)
+	if (tree->type == BTRFS_IO_TREE_DATA)
 		btrfs_set_bit_hook(tree->private_data, state, bits);
 
 	if ((bits_to_set & EXTENT_DIRTY) && !(state->state & EXTENT_DIRTY)) {
@@ -2533,7 +2533,7 @@ static void end_bio_extent_readpage(struct bio *bio)
 		len = bvec->bv_len;
 
 		mirror = io_bio->mirror_num;
-		if (likely(uptodate && tree->ops)) {
+		if (likely(uptodate && tree->type != BTRFS_IO_TREE_NONE)) {
 			ret = readpage_end_io_hook(tree, io_bio, offset, page,
 					start, end, mirror);
 			if (ret)
@@ -2548,7 +2548,7 @@ static void end_bio_extent_readpage(struct bio *bio)
 		if (likely(uptodate))
 			goto readpage_ok;
 
-		if (tree->ops) {
+		if (tree->type != BTRFS_IO_TREE_NONE) {
 			ret = readpage_io_failed_hook(tree, page, mirror);
 			if (ret == -EAGAIN) {
 				/*
@@ -2708,7 +2708,7 @@ static int __must_check submit_one_bio(struct bio *bio, int mirror_num,
 
 	bio->bi_private = NULL;
 
-	if (tree->ops)
+	if (tree->type != BTRFS_IO_TREE_NONE)
 		ret = submit_bio_hook(tree, tree->private_data, bio,
 				mirror_num, bio_flags, start);
 	else
@@ -2762,8 +2762,8 @@ static int submit_extent_page(unsigned int opf, struct extent_io_tree *tree,
 		else
 			contig = bio_end_sector(bio) == sector;
 
-		if (tree->ops && btrfs_merge_bio_hook(page, offset, page_size,
-						      bio, bio_flags))
+		if ((tree->type != BTRFS_IO_TREE_NONE) &&
+		    btrfs_merge_bio_hook(page, offset, page_size, bio, bio_flags))
 			can_merge = false;
 
 		if (prev_bio_flags != bio_flags || !contig || !can_merge ||
@@ -3206,7 +3206,8 @@ static noinline_for_stack int writepage_delalloc(struct inode *inode,
 	int ret;
 	int page_started = 0;
 
-	if (epd->extent_locked || !tree->ops || !tree->ops->is_data)
+	/* simplify */
+	if (epd->extent_locked || tree->type == BTRFS_IO_TREE_NONE || (tree->type != BTRFS_IO_TREE_DATA))
 		return 0;
 
 	while (delalloc_end < page_end) {
@@ -3300,7 +3301,7 @@ static noinline_for_stack int __extent_writepage_io(struct inode *inode,
 	int nr = 0;
 	bool compressed;
 
-	if (tree->ops->is_data) {
+	if (tree->type == BTRFS_IO_TREE_DATA) {
 		ret = btrfs_writepage_start_hook(page, start, page_end);
 		if (ret) {
 			/* Fixup worker will requeue */
