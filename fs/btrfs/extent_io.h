@@ -93,6 +93,7 @@ typedef blk_status_t (extent_submit_bio_start_t)(void *private_data,
 		struct bio *bio, u64 bio_offset);
 
 struct extent_io_ops {
+	bool is_data;
 	/*
 	 * The following callbacks must be allways defined, the function
 	 * pointer will be called unconditionally.
@@ -112,8 +113,6 @@ struct extent_io_ops {
 			     struct writeback_control *wbc);
 
 	int (*writepage_start_hook)(struct page *page, u64 start, u64 end);
-	void (*writepage_end_io_hook)(struct page *page, u64 start, u64 end,
-				      struct extent_state *state, int uptodate);
 	void (*set_bit_hook)(void *private_data, struct extent_state *state,
 			     unsigned *bits);
 	void (*clear_bit_hook)(void *private_data,
@@ -136,6 +135,18 @@ struct extent_io_tree {
 	spinlock_t lock;
 	const struct extent_io_ops *ops;
 };
+
+/* inode.c, find better place */
+void btrfs_writepage_end_io_hook(struct page *page, u64 start, u64 end,
+				struct extent_state *state, int uptodate);
+
+static inline void writepage_end_io_hook(struct extent_io_tree *tree,
+		struct page *page, u64 start, u64 end,
+		struct extent_state *state, int uptodate)
+{
+	if (tree->ops && tree->ops->is_data)
+		btrfs_writepage_end_io_hook(page, start, end, state, uptodate);
+}
 
 struct extent_state {
 	u64 start;
