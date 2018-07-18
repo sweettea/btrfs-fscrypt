@@ -112,7 +112,6 @@ struct extent_io_ops {
 			     unsigned long *nr_written,
 			     struct writeback_control *wbc);
 
-	int (*writepage_start_hook)(struct page *page, u64 start, u64 end);
 	void (*set_bit_hook)(void *private_data, struct extent_state *state,
 			     unsigned *bits);
 	void (*clear_bit_hook)(void *private_data,
@@ -139,6 +138,8 @@ struct extent_io_tree {
 /* inode.c, find better place */
 void btrfs_writepage_end_io_hook(struct page *page, u64 start, u64 end,
 				struct extent_state *state, int uptodate);
+
+int btrfs_writepage_start_hook(struct page *page, u64 start, u64 end);
 
 static inline void writepage_end_io_hook(struct extent_io_tree *tree,
 		struct page *page, u64 start, u64 end,

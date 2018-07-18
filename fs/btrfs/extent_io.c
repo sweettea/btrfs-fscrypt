@@ -3319,9 +3319,8 @@ static noinline_for_stack int __extent_writepage_io(struct inode *inode,
 	int nr = 0;
 	bool compressed;
 
-	if (tree->ops && tree->ops->writepage_start_hook) {
-		ret = tree->ops->writepage_start_hook(page, start,
-						      page_end);
+	if (tree->ops->is_data) {
+		ret = btrfs_writepage_start_hook(page, start, page_end);
 		if (ret) {
 			/* Fixup worker will requeue */
 			if (ret == -EBUSY)
