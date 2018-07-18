@@ -2550,7 +2550,7 @@ static void end_bio_extent_readpage(struct bio *bio)
 			goto readpage_ok;
 
 		if (tree->ops) {
-			ret = tree->ops->readpage_io_failed_hook(page, mirror);
+			ret = readpage_io_failed_hook(tree, page, mirror);
 			if (ret == -EAGAIN) {
 				/*
 				 * Data inode's readpage_io_failed_hook() always

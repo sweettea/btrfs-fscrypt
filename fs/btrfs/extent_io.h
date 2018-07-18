@@ -98,7 +98,6 @@ struct extent_io_ops {
 	int (*readpage_end_io_hook)(struct btrfs_io_bio *io_bio, u64 phy_offset,
 				    struct page *page, u64 start, u64 end,
 				    int mirror);
-	int (*readpage_io_failed_hook)(struct page *page, int failed_mirror);
 };
 
 struct extent_io_tree {
@@ -136,12 +135,23 @@ int btrfs_fill_delalloc_range(void *private_data, struct page *locked_page,
 			      unsigned long *nr_written,
 			      struct writeback_control *wbc);
 
+int btree_io_failed_hook(struct page *page, int failed_mirror);
+
 static inline void writepage_end_io_hook(struct extent_io_tree *tree,
 		struct page *page, u64 start, u64 end,
 		struct extent_state *state, int uptodate)
 {
 	if (tree->ops && tree->ops->is_data)
 		btrfs_writepage_end_io_hook(page, start, end, state, uptodate);
+}
+
+static inline int readpage_io_failed_hook(struct extent_io_tree *tree,
+		struct page *page, int failed_mirror)
+{
+	BUG_ON(!tree->ops);
+	if (tree->ops->is_data)
+		return -EAGAIN;
+	return btree_io_failed_hook(page, failed_mirror);
 }
 
 struct extent_state {
