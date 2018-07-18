@@ -94,23 +94,11 @@ typedef blk_status_t (extent_submit_bio_start_t)(void *private_data,
 
 struct extent_io_ops {
 	bool is_data;
-	/*
-	 * The following callbacks must be allways defined, the function
-	 * pointer will be called unconditionally.
-	 */
 	extent_submit_bio_hook_t *submit_bio_hook;
 	int (*readpage_end_io_hook)(struct btrfs_io_bio *io_bio, u64 phy_offset,
 				    struct page *page, u64 start, u64 end,
 				    int mirror);
 	int (*readpage_io_failed_hook)(struct page *page, int failed_mirror);
-
-	/*
-	 * Optional hooks, called if the pointer is not NULL
-	 */
-	int (*fill_delalloc)(void *private_data, struct page *locked_page,
-			     u64 start, u64 end, int *page_started,
-			     unsigned long *nr_written,
-			     struct writeback_control *wbc);
 };
 
 struct extent_io_tree {
@@ -142,6 +130,11 @@ void btrfs_clear_bit_hook(void *private_data, struct extent_state *state,
 
 void btrfs_check_extent_io_range(void *private_data, const char *caller,
 					u64 start, u64 end);
+
+int btrfs_fill_delalloc_range(void *private_data, struct page *locked_page,
+			      u64 start, u64 end, int *page_started,
+			      unsigned long *nr_written,
+			      struct writeback_control *wbc);
 
 static inline void writepage_end_io_hook(struct extent_io_tree *tree,
 		struct page *page, u64 start, u64 end,

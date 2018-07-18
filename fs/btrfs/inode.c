@@ -1574,7 +1574,7 @@ static inline int need_force_cow(struct inode *inode, u64 start, u64 end)
 /*
  * extent_io.c call back to do delayed allocation processing
  */
-static int run_delalloc_range(void *private_data, struct page *locked_page,
+int btrfs_fill_delalloc_range(void *private_data, struct page *locked_page,
 			      u64 start, u64 end, int *page_started,
 			      unsigned long *nr_written,
 			      struct writeback_control *wbc)
@@ -10478,13 +10478,9 @@ static const struct file_operations btrfs_dir_file_operations = {
 
 static const struct extent_io_ops btrfs_extent_io_ops = {
 	.is_data = true,
-	/* mandatory callbacks */
 	.submit_bio_hook = btrfs_submit_bio_hook,
 	.readpage_end_io_hook = btrfs_readpage_end_io_hook,
 	.readpage_io_failed_hook = btrfs_readpage_io_failed_hook,
-
-	/* optional callbacks */
-	.fill_delalloc = run_delalloc_range,
 };
 
 /*
