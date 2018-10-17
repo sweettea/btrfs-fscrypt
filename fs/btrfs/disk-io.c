@@ -5,7 +5,7 @@
 
 #include <linux/fs.h>
 #include <linux/blkdev.h>
-#include <linux/radix-tree.h>
+#include <linux/xarray.h>
 #include <linux/writeback.h>
 #include <linux/buffer_head.h>
 #include <linux/workqueue.h>
@@ -1132,7 +1132,7 @@ static void __setup_root(struct btrfs_root *root, struct btrfs_fs_info *fs_info,
 	root->nr_delalloc_inodes = 0;
 	root->nr_ordered_extents = 0;
 	root->inode_tree = RB_ROOT;
-	INIT_RADIX_TREE(&root->delayed_nodes_tree, GFP_ATOMIC);
+	xa_init(&root->delayed_nodes);
 	root->block_rsv = NULL;
 
 	INIT_LIST_HEAD(&root->dirty_list);

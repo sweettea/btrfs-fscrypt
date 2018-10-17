@@ -1024,11 +1024,9 @@ struct btrfs_root {
 	/* red-black tree that keeps track of in-memory inodes */
 	struct rb_root inode_tree;
 
-	/*
-	 * radix tree that keeps track of delayed nodes of every inode,
-	 * protected by inode_lock
-	 */
-	struct radix_tree_root delayed_nodes_tree;
+	/* Track delayed nodes of every inode */
+	struct xarray delayed_nodes;
+
 	/*
 	 * right now this just gets used so that a root has its own devid
 	 * for stat.  It may be used for more later

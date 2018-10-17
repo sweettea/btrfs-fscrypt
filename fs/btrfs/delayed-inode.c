@@ -77,7 +77,7 @@ static struct btrfs_delayed_node *btrfs_get_delayed_node(
 	}
 
 	spin_lock(&root->inode_lock);
-	node = radix_tree_lookup(&root->delayed_nodes_tree, ino);
+	node = xa_load(&root->delayed_nodes, ino);
 
 	if (node) {
 		if (btrfs_inode->delayed_node) {
@@ -140,23 +140,18 @@ again:
 	/* cached in the btrfs inode and can be accessed */
 	refcount_set(&node->refs, 2);
 
-	ret = radix_tree_preload(GFP_NOFS);
+	xa_lock(&root->delayed_nodes);
+	ret = __xa_insert(&root->delayed_nodes, ino, node, GFP_NOFS);
 	if (ret) {
+		xa_unlock(&root->delayed_nodes);
 		kmem_cache_free(delayed_node_cache, node);
+		/* Entry already exists */
+		if (ret == -EBUSY)
+			goto again;
 		return ERR_PTR(ret);
 	}
-
-	spin_lock(&root->inode_lock);
-	ret = radix_tree_insert(&root->delayed_nodes_tree, ino, node);
-	if (ret == -EEXIST) {
-		spin_unlock(&root->inode_lock);
-		kmem_cache_free(delayed_node_cache, node);
-		radix_tree_preload_end();
-		goto again;
-	}
 	btrfs_inode->delayed_node = node;
-	spin_unlock(&root->inode_lock);
-	radix_tree_preload_end();
+	xa_unlock(&root->delayed_nodes);
 
 	return node;
 }
@@ -269,15 +264,12 @@ static void __btrfs_release_delayed_node(
 	if (refcount_dec_and_test(&delayed_node->refs)) {
 		struct btrfs_root *root = delayed_node->root;
 
-		spin_lock(&root->inode_lock);
 		/*
 		 * Once our refcount goes to zero, nobody is allowed to bump it
 		 * back up.  We can delete it now.
 		 */
 		ASSERT(refcount_read(&delayed_node->refs) == 0);
-		radix_tree_delete(&root->delayed_nodes_tree,
-				  delayed_node->inode_id);
-		spin_unlock(&root->inode_lock);
+		xa_erase(&root->delayed_nodes, delayed_node->inode_id);
 		kmem_cache_free(delayed_node_cache, delayed_node);
 	}
 }
@@ -1935,31 +1927,18 @@ void btrfs_kill_delayed_inode_items(struct btrfs_inode *inode)
 
 void btrfs_kill_all_delayed_nodes(struct btrfs_root *root)
 {
-	u64 inode_id = 0;
-	struct btrfs_delayed_node *delayed_nodes[8];
-	int i, n;
+	struct btrfs_delayed_node *node;
+	unsigned long inode_id;
 
-	while (1) {
-		spin_lock(&root->inode_lock);
-		n = radix_tree_gang_lookup(&root->delayed_nodes_tree,
-					   (void **)delayed_nodes, inode_id,
-					   ARRAY_SIZE(delayed_nodes));
-		if (!n) {
-			spin_unlock(&root->inode_lock);
-			break;
-		}
-
-		inode_id = delayed_nodes[n - 1]->inode_id + 1;
-
-		for (i = 0; i < n; i++)
-			refcount_inc(&delayed_nodes[i]->refs);
-		spin_unlock(&root->inode_lock);
-
-		for (i = 0; i < n; i++) {
-			__btrfs_kill_delayed_node(delayed_nodes[i]);
-			btrfs_release_delayed_node(delayed_nodes[i]);
-		}
+	xa_lock(&root->delayed_nodes);
+	xa_for_each(&root->delayed_nodes, inode_id, node) {
+		refcount_inc(&node->refs);
+		xa_unlock(&root->delayed_nodes);
+		__btrfs_kill_delayed_node(node);
+		btrfs_release_delayed_node(node);
+		xa_lock(&root->delayed_nodes);
 	}
+	xa_unlock(&root->delayed_nodes);
 }
 
 void btrfs_destroy_delayed_inodes(struct btrfs_fs_info *fs_info)
