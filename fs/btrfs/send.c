@@ -10,7 +10,7 @@
 #include <linux/mount.h>
 #include <linux/xattr.h>
 #include <linux/posix_acl_xattr.h>
-#include <linux/radix-tree.h>
+#include <linux/xarray.h>
 #include <linux/vmalloc.h>
 #include <linux/string.h>
 #include <linux/compat.h>
@@ -107,7 +107,7 @@ struct send_ctx {
 	struct list_head new_refs;
 	struct list_head deleted_refs;
 
-	struct radix_tree_root name_cache;
+	struct xarray name_cache;
 	struct list_head name_cache_list;
 	int name_cache_size;
 
@@ -242,12 +242,12 @@ struct orphan_dir_info {
 struct name_cache_entry {
 	struct list_head list;
 	/*
-	 * radix_tree has only 32bit entries but we need to handle 64bit inums.
-	 * We use the lower 32bit of the 64bit inum to store it in the tree. If
-	 * more then one inum would fall into the same entry, we use radix_list
-	 * to store the additional entries. radix_list is also used to store
-	 * entries where two entries have the same inum but different
-	 * generations.
+	 * Xarray has only 32bit indices but we need to handle 64bit inums.
+	 * We use the lower 32bit of the 64bit inum to store it in the array.
+	 * If more then one inum would fall into the same entry, we use
+	 * radix_list to store the additional entries. radix_list is also
+	 * used to store entries where two entries have the same inum but
+	 * different generations.
 	 */
 	struct list_head radix_list;
 	u64 ino;
@@ -1999,8 +1999,7 @@ static int name_cache_insert(struct send_ctx *sctx,
 	int ret = 0;
 	struct list_head *nce_head;
 
-	nce_head = radix_tree_lookup(&sctx->name_cache,
-			(unsigned long)nce->ino);
+	nce_head = xa_load(&sctx->name_cache, (unsigned long)nce->ino);
 	if (!nce_head) {
 		nce_head = kmalloc(sizeof(*nce_head), GFP_KERNEL);
 		if (!nce_head) {
@@ -2009,7 +2008,7 @@ static int name_cache_insert(struct send_ctx *sctx,
 		}
 		INIT_LIST_HEAD(nce_head);
 
-		ret = radix_tree_insert(&sctx->name_cache, nce->ino, nce_head);
+		ret = xa_insert(&sctx->name_cache, nce->ino, nce_head, GFP_KERNEL);
 		if (ret < 0) {
 			kfree(nce_head);
 			kfree(nce);
@@ -2028,8 +2027,7 @@ static void name_cache_delete(struct send_ctx *sctx,
 {
 	struct list_head *nce_head;
 
-	nce_head = radix_tree_lookup(&sctx->name_cache,
-			(unsigned long)nce->ino);
+	nce_head = xa_load(&sctx->name_cache, (unsigned long)nce->ino);
 	if (!nce_head) {
 		btrfs_err(sctx->send_root->fs_info,
 	      "name_cache_delete lookup failed ino %llu cache size %d, leaking memory",
@@ -2044,7 +2042,7 @@ static void name_cache_delete(struct send_ctx *sctx,
 	 * We may not get to the final release of nce_head if the lookup fails
 	 */
 	if (nce_head && list_empty(nce_head)) {
-		radix_tree_delete(&sctx->name_cache, (unsigned long)nce->ino);
+		xa_erase(&sctx->name_cache, (unsigned long)nce->ino);
 		kfree(nce_head);
 	}
 }
@@ -2055,7 +2053,7 @@ static struct name_cache_entry *name_cache_search(struct send_ctx *sctx,
 	struct list_head *nce_head;
 	struct name_cache_entry *cur;
 
-	nce_head = radix_tree_lookup(&sctx->name_cache, (unsigned long)ino);
+	nce_head = xa_load(&sctx->name_cache, (unsigned long)ino);
 	if (!nce_head)
 		return NULL;
 
@@ -7098,7 +7096,7 @@ long btrfs_ioctl_send(struct file *mnt_file, struct btrfs_ioctl_send_args *arg)
 
 	INIT_LIST_HEAD(&sctx->new_refs);
 	INIT_LIST_HEAD(&sctx->deleted_refs);
-	INIT_RADIX_TREE(&sctx->name_cache, GFP_KERNEL);
+	xa_init(&sctx->name_cache);
 	INIT_LIST_HEAD(&sctx->name_cache_list);
 
 	sctx->flags = arg->flags;
