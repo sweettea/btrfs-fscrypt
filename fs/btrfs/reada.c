@@ -226,17 +226,17 @@ static struct reada_zone *reada_find_zone(struct btrfs_device *dev, u64 logical,
 {
 	struct btrfs_fs_info *fs_info = dev->fs_info;
 	int ret;
-	struct reada_zone *zone;
+	struct reada_zone *curr, *zone;
 	struct btrfs_block_group_cache *cache = NULL;
 	u64 start;
 	u64 end;
+	unsigned long index;
 	int i;
 
-	zone = NULL;
+	index = logical >> PAGE_SHIFT;
 	spin_lock(&fs_info->reada_lock);
-	ret = radix_tree_gang_lookup(&dev->reada_zones, (void **)&zone,
-				     logical >> PAGE_SHIFT, 1);
-	if (ret == 1 && logical >= zone->start && logical <= zone->end) {
+	zone = xa_find(&dev->reada_zones, &index, ULONG_MAX, XA_PRESENT);
+	if (zone && logical >= zone->start && logical <= zone->end) {
 		kref_get(&zone->refcnt);
 		spin_unlock(&fs_info->reada_lock);
 		return zone;
@@ -256,7 +256,8 @@ static struct reada_zone *reada_find_zone(struct btrfs_device *dev, u64 logical,
 	if (!zone)
 		return NULL;
 
-	ret = radix_tree_preload(GFP_KERNEL);
+	ret = xa_reserve(&dev->reada_zones, (unsigned long)(end >> PAGE_SHIFT),
+			 GFP_KERNEL);
 	if (ret) {
 		kfree(zone);
 		return NULL;
@@ -277,21 +278,18 @@ static struct reada_zone *reada_find_zone(struct btrfs_device *dev, u64 logical,
 	zone->ndevs = bbio->num_stripes;
 
 	spin_lock(&fs_info->reada_lock);
-	ret = radix_tree_insert(&dev->reada_zones,
-				(unsigned long)(zone->end >> PAGE_SHIFT),
-				zone);
-
-	if (ret == -EEXIST) {
+	curr = xa_cmpxchg(&dev->reada_zones,
+			  (unsigned long)(zone->end >> PAGE_SHIFT), NULL,
+			  zone, GFP_NOWAIT | __GFP_NOWARN);
+	if (curr) {
 		kfree(zone);
-		ret = radix_tree_gang_lookup(&dev->reada_zones, (void **)&zone,
-					     logical >> PAGE_SHIFT, 1);
-		if (ret == 1 && logical >= zone->start && logical <= zone->end)
+		zone = curr;
+		if (logical >= zone->start && logical <= zone->end)
 			kref_get(&zone->refcnt);
 		else
 			zone = NULL;
 	}
 	spin_unlock(&fs_info->reada_lock);
-	radix_tree_preload_end();
 
 	return zone;
 }
@@ -526,9 +524,7 @@ static void reada_zone_release(struct kref *kref)
 {
 	struct reada_zone *zone = container_of(kref, struct reada_zone, refcnt);
 
-	radix_tree_delete(&zone->device->reada_zones,
-			  zone->end >> PAGE_SHIFT);
-
+	xa_erase(&zone->device->reada_zones, zone->end >> PAGE_SHIFT);
 	kfree(zone);
 }
 
@@ -581,7 +577,8 @@ static void reada_peer_zones_set_lock(struct reada_zone *zone, int lock)
 
 	for (i = 0; i < zone->ndevs; ++i) {
 		struct reada_zone *peer;
-		peer = radix_tree_lookup(&zone->devs[i]->reada_zones, index);
+
+		peer = xa_load(&zone->devs[i]->reada_zones, index);
 		if (peer && peer->device != zone->device)
 			peer->locked = lock;
 	}
@@ -592,12 +589,11 @@ static void reada_peer_zones_set_lock(struct reada_zone *zone, int lock)
  */
 static int reada_pick_zone(struct btrfs_device *dev)
 {
-	struct reada_zone *top_zone = NULL;
+	struct reada_zone *zone, *top_zone = NULL;
 	struct reada_zone *top_locked_zone = NULL;
 	u64 top_elems = 0;
 	u64 top_locked_elems = 0;
-	unsigned long index = 0;
-	int ret;
+	unsigned long index;
 
 	if (dev->reada_curr_zone) {
 		reada_peer_zones_set_lock(dev->reada_curr_zone, 0);
@@ -605,14 +601,7 @@ static int reada_pick_zone(struct btrfs_device *dev)
 		dev->reada_curr_zone = NULL;
 	}
 	/* pick the zone with the most elements */
-	while (1) {
-		struct reada_zone *zone;
-
-		ret = radix_tree_gang_lookup(&dev->reada_zones,
-					     (void **)&zone, index, 1);
-		if (ret == 0)
-			break;
-		index = (zone->end >> PAGE_SHIFT) + 1;
+	xa_for_each(&dev->reada_zones, index, zone) {
 		if (zone->locked) {
 			if (zone->elems > top_locked_elems) {
 				top_locked_elems = zone->elems;
@@ -839,15 +828,11 @@ static void dump_devs(struct btrfs_fs_info *fs_info, int all)
 
 	spin_lock(&fs_info->reada_lock);
 	list_for_each_entry(device, &fs_devices->devices, dev_list) {
+		struct reada_zone *zone;
+
 		btrfs_debug(fs_info, "dev %lld has %d in flight", device->devid,
 			atomic_read(&device->reada_in_flight));
-		index = 0;
-		while (1) {
-			struct reada_zone *zone;
-			ret = radix_tree_gang_lookup(&device->reada_zones,
-						     (void **)&zone, index, 1);
-			if (ret == 0)
-				break;
+		xa_for_each(&device->reada_zones, index, zone) {
 			pr_debug("  zone %llu-%llu elems %llu locked %d devs",
 				    zone->start, zone->end, zone->elems,
 				    zone->locked);
@@ -859,7 +844,6 @@ static void dump_devs(struct btrfs_fs_info *fs_info, int all)
 				pr_cont(" curr off %llu",
 					device->reada_next - zone->start);
 			pr_cont("\n");
-			index = (zone->end >> PAGE_SHIFT) + 1;
 		}
 		cnt = 0;
 		index = 0;

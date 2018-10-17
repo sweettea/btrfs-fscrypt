@@ -137,7 +137,7 @@ struct btrfs_device {
 	atomic_t reada_in_flight;
 	u64 reada_next;
 	struct reada_zone *reada_curr_zone;
-	struct radix_tree_root reada_zones;
+	struct xarray reada_zones;
 	struct radix_tree_root reada_extents;
 
 	/* disk I/O failure stats. For detailed description refer to
