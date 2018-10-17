@@ -2629,7 +2629,7 @@ int open_ctree(struct super_block *sb,
 	}
 
 	xa_init(&fs_info->fs_roots);
-	INIT_RADIX_TREE(&fs_info->buffer_radix, GFP_ATOMIC);
+	xa_init(&fs_info->buffer_array);
 	INIT_LIST_HEAD(&fs_info->trans_list);
 	INIT_LIST_HEAD(&fs_info->dead_roots);
 	INIT_LIST_HEAD(&fs_info->delayed_iputs);
@@ -2641,7 +2641,6 @@ int open_ctree(struct super_block *sb,
 	spin_lock_init(&fs_info->defrag_inodes_lock);
 	spin_lock_init(&fs_info->tree_mod_seq_lock);
 	spin_lock_init(&fs_info->super_lock);
-	spin_lock_init(&fs_info->buffer_lock);
 	spin_lock_init(&fs_info->unused_bgs_lock);
 	rwlock_init(&fs_info->tree_mod_log_lock);
 	mutex_init(&fs_info->unused_bg_unpin_mutex);

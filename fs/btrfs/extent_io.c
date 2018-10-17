@@ -5043,8 +5043,7 @@ struct extent_buffer *find_extent_buffer(struct btrfs_fs_info *fs_info,
 	struct extent_buffer *eb;
 
 	rcu_read_lock();
-	eb = radix_tree_lookup(&fs_info->buffer_radix,
-			       start >> PAGE_SHIFT);
+	eb = xa_load(&fs_info->buffer_array, start >> PAGE_SHIFT);
 	if (eb && atomic_inc_not_zero(&eb->refs)) {
 		rcu_read_unlock();
 		/*
@@ -5078,38 +5077,33 @@ struct extent_buffer *find_extent_buffer(struct btrfs_fs_info *fs_info,
 struct extent_buffer *alloc_test_extent_buffer(struct btrfs_fs_info *fs_info,
 					u64 start)
 {
-	struct extent_buffer *eb, *exists = NULL;
-	int ret;
+	struct extent_buffer *exists, *eb = NULL;
 
-	eb = find_extent_buffer(fs_info, start);
-	if (eb)
-		return eb;
-	eb = alloc_dummy_extent_buffer(fs_info, start);
+again:
+	exists = find_extent_buffer(fs_info, start);
+	if (exists)
+		goto free_eb;
+	if (!eb)
+		eb = alloc_dummy_extent_buffer(fs_info, start);
 	if (!eb)
 		return NULL;
 	eb->fs_info = fs_info;
-again:
-	ret = radix_tree_preload(GFP_NOFS);
-	if (ret)
-		goto free_eb;
-	spin_lock(&fs_info->buffer_lock);
-	ret = radix_tree_insert(&fs_info->buffer_radix,
-				start >> PAGE_SHIFT, eb);
-	spin_unlock(&fs_info->buffer_lock);
-	radix_tree_preload_end();
-	if (ret == -EEXIST) {
-		exists = find_extent_buffer(fs_info, start);
-		if (exists)
+	exists = xa_cmpxchg(&fs_info->buffer_array, start >> PAGE_SHIFT,
+			    NULL, eb, GFP_NOFS);
+	if (exists) {
+		if (xa_is_err(exists)) {
+			exists = NULL;
 			goto free_eb;
-		else
-			goto again;
+		}
+		goto again;
 	}
 	check_buffer_tree_ref(eb);
 	set_bit(EXTENT_BUFFER_IN_TREE, &eb->bflags);
 
 	return eb;
 free_eb:
-	btrfs_release_extent_buffer(eb);
+	if (eb)
+		btrfs_release_extent_buffer(eb);
 	return exists;
 }
 #endif
@@ -5121,22 +5115,24 @@ struct extent_buffer *alloc_extent_buffer(struct btrfs_fs_info *fs_info,
 	int num_pages;
 	int i;
 	unsigned long index = start >> PAGE_SHIFT;
-	struct extent_buffer *eb;
+	struct extent_buffer *eb = NULL;
 	struct extent_buffer *exists = NULL;
 	struct page *p;
 	struct address_space *mapping = fs_info->btree_inode->i_mapping;
 	int uptodate = 1;
-	int ret;
 
 	if (!IS_ALIGNED(start, fs_info->sectorsize)) {
 		btrfs_err(fs_info, "bad tree block start %llu", start);
 		return ERR_PTR(-EINVAL);
 	}
 
-	eb = find_extent_buffer(fs_info, start);
-	if (eb)
-		return eb;
+again:
+	exists = find_extent_buffer(fs_info, start);
+	if (exists)
+		goto free_eb;
 
+	if (eb)
+		goto add;
 	eb = __alloc_extent_buffer(fs_info, start, len);
 	if (!eb)
 		return ERR_PTR(-ENOMEM);
@@ -5193,24 +5189,15 @@ struct extent_buffer *alloc_extent_buffer(struct btrfs_fs_info *fs_info,
 	}
 	if (uptodate)
 		set_bit(EXTENT_BUFFER_UPTODATE, &eb->bflags);
-again:
-	ret = radix_tree_preload(GFP_NOFS);
-	if (ret) {
-		exists = ERR_PTR(ret);
-		goto free_eb;
-	}
-
-	spin_lock(&fs_info->buffer_lock);
-	ret = radix_tree_insert(&fs_info->buffer_radix,
-				start >> PAGE_SHIFT, eb);
-	spin_unlock(&fs_info->buffer_lock);
-	radix_tree_preload_end();
-	if (ret == -EEXIST) {
-		exists = find_extent_buffer(fs_info, start);
-		if (exists)
+add:
+	exists = xa_cmpxchg(&fs_info->buffer_array, start >> PAGE_SHIFT,
+			    NULL, eb, GFP_NOFS);
+	if (exists) {
+		if (xa_is_err(exists)) {
+			exists = NULL;
 			goto free_eb;
-		else
-			goto again;
+		}
+		goto again;
 	}
 	/* add one reference for the tree */
 	check_buffer_tree_ref(eb);
@@ -5226,6 +5213,8 @@ again:
 	return eb;
 
 free_eb:
+	if (!eb)
+		return exists;
 	WARN_ON(!atomic_dec_and_test(&eb->refs));
 	for (i = 0; i < num_pages; i++) {
 		if (eb->pages[i])
@@ -5255,10 +5244,7 @@ static int release_extent_buffer(struct extent_buffer *eb)
 
 			spin_unlock(&eb->refs_lock);
 
-			spin_lock(&fs_info->buffer_lock);
-			radix_tree_delete(&fs_info->buffer_radix,
-					  eb->start >> PAGE_SHIFT);
-			spin_unlock(&fs_info->buffer_lock);
+			xa_erase(&fs_info->buffer_array, eb->start >> PAGE_SHIFT);
 		} else {
 			spin_unlock(&eb->refs_lock);
 		}

@@ -117,7 +117,6 @@ struct btrfs_fs_info *btrfs_alloc_dummy_fs_info(u32 nodesize, u32 sectorsize)
 		return NULL;
 	}
 
-	spin_lock_init(&fs_info->buffer_lock);
 	spin_lock_init(&fs_info->qgroup_lock);
 	spin_lock_init(&fs_info->super_lock);
 	spin_lock_init(&fs_info->tree_mod_seq_lock);
@@ -131,7 +130,7 @@ struct btrfs_fs_info *btrfs_alloc_dummy_fs_info(u32 nodesize, u32 sectorsize)
 	INIT_LIST_HEAD(&fs_info->dirty_qgroups);
 	INIT_LIST_HEAD(&fs_info->dead_roots);
 	INIT_LIST_HEAD(&fs_info->tree_mod_seq_list);
-	INIT_RADIX_TREE(&fs_info->buffer_radix, GFP_ATOMIC);
+	xa_init(&fs_info->buffer_array);
 	xa_init(&fs_info->fs_roots);
 	extent_io_tree_init(fs_info, &fs_info->freed_extents[0],
 			    IO_TREE_FS_INFO_FREED_EXTENTS0, NULL);
@@ -147,8 +146,8 @@ struct btrfs_fs_info *btrfs_alloc_dummy_fs_info(u32 nodesize, u32 sectorsize)
 
 void btrfs_free_dummy_fs_info(struct btrfs_fs_info *fs_info)
 {
-	struct radix_tree_iter iter;
-	void **slot;
+	struct extent_buffer *eb;
+	unsigned long index;
 
 	if (!fs_info)
 		return;
@@ -159,25 +158,8 @@ void btrfs_free_dummy_fs_info(struct btrfs_fs_info *fs_info)
 
 	test_mnt->mnt_sb->s_fs_info = NULL;
 
-	spin_lock(&fs_info->buffer_lock);
-	radix_tree_for_each_slot(slot, &fs_info->buffer_radix, &iter, 0) {
-		struct extent_buffer *eb;
-
-		eb = radix_tree_deref_slot_protected(slot, &fs_info->buffer_lock);
-		if (!eb)
-			continue;
-		/* Shouldn't happen but that kind of thinking creates CVE's */
-		if (radix_tree_exception(eb)) {
-			if (radix_tree_deref_retry(eb))
-				slot = radix_tree_iter_retry(&iter);
-			continue;
-		}
-		slot = radix_tree_iter_resume(slot, &iter);
-		spin_unlock(&fs_info->buffer_lock);
+	xa_for_each(&fs_info->buffer_array, index, eb)
 		free_extent_buffer_stale(eb);
-		spin_lock(&fs_info->buffer_lock);
-	}
-	spin_unlock(&fs_info->buffer_lock);
 
 	btrfs_free_qgroup_config(fs_info);
 	btrfs_free_fs_roots(fs_info);

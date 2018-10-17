@@ -861,9 +861,8 @@ struct btrfs_fs_info {
 	/* readahead works cnt */
 	atomic_t reada_works_cnt;
 
-	/* Extent buffer radix tree */
-	spinlock_t buffer_lock;
-	struct radix_tree_root buffer_radix;
+	/* Extent buffer array */
+	struct xarray buffer_array;
 
 	/* next backup root to be overwritten */
 	int backup_root_index;
