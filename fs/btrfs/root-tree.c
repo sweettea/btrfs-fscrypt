@@ -310,7 +310,8 @@ int btrfs_find_orphan_roots(struct btrfs_fs_info *fs_info)
 
 		err = btrfs_insert_fs_root(fs_info, root);
 		if (err) {
-			BUG_ON(err == -EEXIST);
+			/* The tree was already in the fs_root */
+			BUG_ON(err == -EBUSY);
 			btrfs_free_fs_root(root);
 			break;
 		}

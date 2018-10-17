@@ -1500,13 +1500,7 @@ fail:
 struct btrfs_root *btrfs_lookup_fs_root(struct btrfs_fs_info *fs_info,
 					u64 root_id)
 {
-	struct btrfs_root *root;
-
-	spin_lock(&fs_info->fs_roots_radix_lock);
-	root = radix_tree_lookup(&fs_info->fs_roots_radix,
-				 (unsigned long)root_id);
-	spin_unlock(&fs_info->fs_roots_radix_lock);
-	return root;
+	return xa_load(&fs_info->fs_roots, (unsigned long)root_id);
 }
 
 int btrfs_insert_fs_root(struct btrfs_fs_info *fs_info,
@@ -1514,18 +1508,13 @@ int btrfs_insert_fs_root(struct btrfs_fs_info *fs_info,
 {
 	int ret;
 
-	ret = radix_tree_preload(GFP_NOFS);
-	if (ret)
-		return ret;
-
-	spin_lock(&fs_info->fs_roots_radix_lock);
-	ret = radix_tree_insert(&fs_info->fs_roots_radix,
+	xa_lock(&fs_info->fs_roots);
+	ret = __xa_insert(&fs_info->fs_roots,
 				(unsigned long)root->root_key.objectid,
-				root);
+				root, GFP_NOFS);
 	if (ret == 0)
 		set_bit(BTRFS_ROOT_IN_RADIX, &root->state);
-	spin_unlock(&fs_info->fs_roots_radix_lock);
-	radix_tree_preload_end();
+	xa_unlock(&fs_info->fs_roots);
 
 	return ret;
 }
@@ -1597,7 +1586,8 @@ again:
 
 	ret = btrfs_insert_fs_root(fs_info, root);
 	if (ret) {
-		if (ret == -EEXIST) {
+		/* The tree was already in the fs_root */
+		if (ret == -EBUSY) {
 			btrfs_free_fs_root(root);
 			goto again;
 		}
@@ -2033,33 +2023,25 @@ static void free_root_pointers(struct btrfs_fs_info *info, int chunk_root)
 
 void btrfs_free_fs_roots(struct btrfs_fs_info *fs_info)
 {
-	int ret;
-	struct btrfs_root *gang[8];
-	int i;
+	struct btrfs_root *root;
+	unsigned long index;
 
 	while (!list_empty(&fs_info->dead_roots)) {
-		gang[0] = list_entry(fs_info->dead_roots.next,
+		root = list_entry(fs_info->dead_roots.next,
 				     struct btrfs_root, root_list);
-		list_del(&gang[0]->root_list);
+		list_del(&root->root_list);
 
-		if (test_bit(BTRFS_ROOT_IN_RADIX, &gang[0]->state)) {
-			btrfs_drop_and_free_fs_root(fs_info, gang[0]);
+		if (test_bit(BTRFS_ROOT_IN_RADIX, &root->state)) {
+			btrfs_drop_and_free_fs_root(fs_info, root);
 		} else {
-			free_extent_buffer(gang[0]->node);
-			free_extent_buffer(gang[0]->commit_root);
-			btrfs_put_fs_root(gang[0]);
+			free_extent_buffer(root->node);
+			free_extent_buffer(root->commit_root);
+			btrfs_put_fs_root(root);
 		}
 	}
 
-	while (1) {
-		ret = radix_tree_gang_lookup(&fs_info->fs_roots_radix,
-					     (void **)gang, 0,
-					     ARRAY_SIZE(gang));
-		if (!ret)
-			break;
-		for (i = 0; i < ret; i++)
-			btrfs_drop_and_free_fs_root(fs_info, gang[i]);
-	}
+	xa_for_each(&fs_info->fs_roots, index, root)
+		btrfs_drop_and_free_fs_root(fs_info, root);
 
 	if (test_bit(BTRFS_FS_STATE_ERROR, &fs_info->fs_state)) {
 		btrfs_free_log_root_tree(NULL, fs_info);
@@ -2646,7 +2628,7 @@ int open_ctree(struct super_block *sb,
 		goto fail_delalloc_bytes;
 	}
 
-	INIT_RADIX_TREE(&fs_info->fs_roots_radix, GFP_ATOMIC);
+	xa_init(&fs_info->fs_roots);
 	INIT_RADIX_TREE(&fs_info->buffer_radix, GFP_ATOMIC);
 	INIT_LIST_HEAD(&fs_info->trans_list);
 	INIT_LIST_HEAD(&fs_info->dead_roots);
@@ -2655,7 +2637,6 @@ int open_ctree(struct super_block *sb,
 	INIT_LIST_HEAD(&fs_info->caching_block_groups);
 	spin_lock_init(&fs_info->delalloc_root_lock);
 	spin_lock_init(&fs_info->trans_lock);
-	spin_lock_init(&fs_info->fs_roots_radix_lock);
 	spin_lock_init(&fs_info->delayed_iput_lock);
 	spin_lock_init(&fs_info->defrag_inodes_lock);
 	spin_lock_init(&fs_info->tree_mod_seq_lock);
@@ -3855,10 +3836,7 @@ int write_all_supers(struct btrfs_fs_info *fs_info, int max_mirrors)
 void btrfs_drop_and_free_fs_root(struct btrfs_fs_info *fs_info,
 				  struct btrfs_root *root)
 {
-	spin_lock(&fs_info->fs_roots_radix_lock);
-	radix_tree_delete(&fs_info->fs_roots_radix,
-			  (unsigned long)root->root_key.objectid);
-	spin_unlock(&fs_info->fs_roots_radix_lock);
+	xa_erase(&fs_info->fs_roots, (unsigned long)root->root_key.objectid);
 
 	if (btrfs_root_refs(&root->root_item) == 0)
 		synchronize_srcu(&fs_info->subvol_srcu);
@@ -3906,9 +3884,9 @@ int btrfs_cleanup_fs_roots(struct btrfs_fs_info *fs_info)
 
 	while (1) {
 		index = srcu_read_lock(&fs_info->subvol_srcu);
-		ret = radix_tree_gang_lookup(&fs_info->fs_roots_radix,
-					     (void **)gang, root_objectid,
-					     ARRAY_SIZE(gang));
+		ret = xa_extract(&fs_info->fs_roots, (void **)gang,
+				 root_objectid, ULONG_MAX, ARRAY_SIZE(gang),
+				 XA_PRESENT);
 		if (!ret) {
 			srcu_read_unlock(&fs_info->subvol_srcu, index);
 			break;

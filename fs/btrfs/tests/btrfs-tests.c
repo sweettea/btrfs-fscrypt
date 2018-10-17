@@ -120,7 +120,6 @@ struct btrfs_fs_info *btrfs_alloc_dummy_fs_info(u32 nodesize, u32 sectorsize)
 	spin_lock_init(&fs_info->buffer_lock);
 	spin_lock_init(&fs_info->qgroup_lock);
 	spin_lock_init(&fs_info->super_lock);
-	spin_lock_init(&fs_info->fs_roots_radix_lock);
 	spin_lock_init(&fs_info->tree_mod_seq_lock);
 	mutex_init(&fs_info->qgroup_ioctl_lock);
 	mutex_init(&fs_info->qgroup_rescan_lock);
@@ -133,7 +132,7 @@ struct btrfs_fs_info *btrfs_alloc_dummy_fs_info(u32 nodesize, u32 sectorsize)
 	INIT_LIST_HEAD(&fs_info->dead_roots);
 	INIT_LIST_HEAD(&fs_info->tree_mod_seq_list);
 	INIT_RADIX_TREE(&fs_info->buffer_radix, GFP_ATOMIC);
-	INIT_RADIX_TREE(&fs_info->fs_roots_radix, GFP_ATOMIC);
+	xa_init(&fs_info->fs_roots);
 	extent_io_tree_init(fs_info, &fs_info->freed_extents[0],
 			    IO_TREE_FS_INFO_FREED_EXTENTS0, NULL);
 	extent_io_tree_init(fs_info, &fs_info->freed_extents[1],

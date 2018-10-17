@@ -543,8 +543,7 @@ struct btrfs_fs_info {
 	/* the log root tree is a directory of all the other log roots */
 	struct btrfs_root *log_root_tree;
 
-	spinlock_t fs_roots_radix_lock;
-	struct radix_tree_root fs_roots_radix;
+	struct xarray fs_roots;
 
 	/* block group cache stuff */
 	spinlock_t block_group_cache_lock;

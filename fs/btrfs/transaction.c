@@ -22,7 +22,7 @@
 #include "qgroup.h"
 #include "block-group.h"
 
-#define BTRFS_ROOT_TRANS_TAG 0
+#define BTRFS_ROOT_TRANS_MARK XA_MARK_0
 
 static const unsigned int btrfs_blocked_trans_types[TRANS_STATE_MAX] = {
 	[TRANS_STATE_RUNNING]		= 0U,
@@ -300,15 +300,15 @@ static int record_root_in_trans(struct btrfs_trans_handle *trans,
 		 */
 		smp_wmb();
 
-		spin_lock(&fs_info->fs_roots_radix_lock);
+		xa_lock(&fs_info->fs_roots);
 		if (root->last_trans == trans->transid && !force) {
-			spin_unlock(&fs_info->fs_roots_radix_lock);
+			xa_unlock(&fs_info->fs_roots);
 			return 0;
 		}
-		radix_tree_tag_set(&fs_info->fs_roots_radix,
-				   (unsigned long)root->root_key.objectid,
-				   BTRFS_ROOT_TRANS_TAG);
-		spin_unlock(&fs_info->fs_roots_radix_lock);
+		__xa_set_mark(&fs_info->fs_roots,
+			      (unsigned long)root->root_key.objectid,
+			      BTRFS_ROOT_TRANS_MARK);
+		xa_unlock(&fs_info->fs_roots);
 		root->last_trans = trans->transid;
 
 		/* this is pretty tricky.  We don't want to
@@ -350,11 +350,9 @@ void btrfs_add_dropped_root(struct btrfs_trans_handle *trans,
 	spin_unlock(&cur_trans->dropped_roots_lock);
 
 	/* Make sure we don't try to update the root at commit time */
-	spin_lock(&fs_info->fs_roots_radix_lock);
-	radix_tree_tag_clear(&fs_info->fs_roots_radix,
-			     (unsigned long)root->root_key.objectid,
-			     BTRFS_ROOT_TRANS_TAG);
-	spin_unlock(&fs_info->fs_roots_radix_lock);
+	xa_clear_mark(&fs_info->fs_roots,
+		      (unsigned long)root->root_key.objectid,
+		      BTRFS_ROOT_TRANS_MARK);
 }
 
 int btrfs_record_root_in_trans(struct btrfs_trans_handle *trans,
@@ -1207,52 +1205,41 @@ void btrfs_add_dead_root(struct btrfs_root *root)
 static noinline int commit_fs_roots(struct btrfs_trans_handle *trans)
 {
 	struct btrfs_fs_info *fs_info = trans->fs_info;
-	struct btrfs_root *gang[8];
-	int i;
-	int ret;
+	struct btrfs_root *root;
+	unsigned long index;
 	int err = 0;
 
-	spin_lock(&fs_info->fs_roots_radix_lock);
-	while (1) {
-		ret = radix_tree_gang_lookup_tag(&fs_info->fs_roots_radix,
-						 (void **)gang, 0,
-						 ARRAY_SIZE(gang),
-						 BTRFS_ROOT_TRANS_TAG);
-		if (ret == 0)
-			break;
-		for (i = 0; i < ret; i++) {
-			struct btrfs_root *root = gang[i];
-			radix_tree_tag_clear(&fs_info->fs_roots_radix,
-					(unsigned long)root->root_key.objectid,
-					BTRFS_ROOT_TRANS_TAG);
-			spin_unlock(&fs_info->fs_roots_radix_lock);
+	xa_lock(&fs_info->fs_roots);
+	xa_for_each_marked(&fs_info->fs_roots, index, root,
+			   BTRFS_ROOT_TRANS_MARK) {
+		__xa_clear_mark(&fs_info->fs_roots, index,
+				BTRFS_ROOT_TRANS_MARK);
+		xa_unlock(&fs_info->fs_roots);
 
-			btrfs_free_log(trans, root);
-			btrfs_update_reloc_root(trans, root);
+		btrfs_free_log(trans, root);
+		btrfs_update_reloc_root(trans, root);
 
-			btrfs_save_ino_cache(root, trans);
+		btrfs_save_ino_cache(root, trans);
 
-			/* see comments in should_cow_block() */
-			clear_bit(BTRFS_ROOT_FORCE_COW, &root->state);
-			smp_mb__after_atomic();
+		/* See comments in should_cow_block() */
+		clear_bit(BTRFS_ROOT_FORCE_COW, &root->state);
+		smp_mb__after_atomic();
 
-			if (root->commit_root != root->node) {
-				list_add_tail(&root->dirty_list,
-					&trans->transaction->switch_commits);
-				btrfs_set_root_node(&root->root_item,
-						    root->node);
-			}
-
-			err = btrfs_update_root(trans, fs_info->tree_root,
-						&root->root_key,
-						&root->root_item);
-			spin_lock(&fs_info->fs_roots_radix_lock);
-			if (err)
-				break;
-			btrfs_qgroup_free_meta_all_pertrans(root);
+		if (root->commit_root != root->node) {
+			list_add_tail(&root->dirty_list,
+				&trans->transaction->switch_commits);
+			btrfs_set_root_node(&root->root_item, root->node);
 		}
+
+		err = btrfs_update_root(trans, fs_info->tree_root,
+					&root->root_key, &root->root_item);
+		xa_lock(&fs_info->fs_roots);
+		if (err)
+			break;
+		btrfs_qgroup_free_meta_all_pertrans(root);
+		index = 0;
 	}
-	spin_unlock(&fs_info->fs_roots_radix_lock);
+	xa_unlock(&fs_info->fs_roots);
 	return err;
 }
 
