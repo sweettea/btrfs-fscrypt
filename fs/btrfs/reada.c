@@ -428,13 +428,14 @@ static struct reada_extent *reada_find_extent(struct btrfs_fs_info *fs_info,
 			continue;
 		}
 		prev_dev = dev;
-		ret = radix_tree_insert(&dev->reada_extents, index, re);
+		ret = xa_insert(&dev->reada_extents, index, re,
+				GFP_NOFS & ~__GFP_DIRECT_RECLAIM);
 		if (ret) {
 			while (--nzones >= 0) {
 				dev = re->zones[nzones]->device;
 				BUG_ON(dev == NULL);
 				/* ignore whether the entry was inserted */
-				radix_tree_delete(&dev->reada_extents, index);
+				xa_erase(&dev->reada_extents, index);
 			}
 			radix_tree_delete(&fs_info->reada_tree, index);
 			spin_unlock(&fs_info->reada_lock);
@@ -494,7 +495,7 @@ static void reada_extent_put(struct btrfs_fs_info *fs_info,
 	for (i = 0; i < re->nzones; ++i) {
 		struct reada_zone *zone = re->zones[i];
 
-		radix_tree_delete(&zone->device->reada_extents, index);
+		xa_erase(&zone->device->reada_extents, index);
 	}
 
 	spin_unlock(&fs_info->reada_lock);
@@ -664,6 +665,7 @@ static int reada_start_machine_dev(struct btrfs_device *dev)
 	int mirror_num = 0;
 	struct extent_buffer *eb = NULL;
 	u64 logical;
+	unsigned long index;
 	int ret;
 	int i;
 
@@ -680,19 +682,18 @@ static int reada_start_machine_dev(struct btrfs_device *dev)
 	 * a contiguous block of extents, we could also coagulate them or use
 	 * plugging to speed things up
 	 */
-	ret = radix_tree_gang_lookup(&dev->reada_extents, (void **)&re,
-				     dev->reada_next >> PAGE_SHIFT, 1);
-	if (ret == 0 || re->logical > dev->reada_curr_zone->end) {
+	index = dev->reada_next >> PAGE_SHIFT;
+	re = xa_find(&dev->reada_extents, &index, ULONG_MAX, XA_PRESENT);
+	if (!re || re->logical > dev->reada_curr_zone->end) {
 		ret = reada_pick_zone(dev);
 		if (!ret) {
 			spin_unlock(&fs_info->reada_lock);
 			return 0;
 		}
-		re = NULL;
-		ret = radix_tree_gang_lookup(&dev->reada_extents, (void **)&re,
-					dev->reada_next >> PAGE_SHIFT, 1);
+		index = dev->reada_next >> PAGE_SHIFT;
+		re = xa_find(&dev->reada_extents, &index, ULONG_MAX, XA_PRESENT);
 	}
-	if (ret == 0) {
+	if (!re) {
 		spin_unlock(&fs_info->reada_lock);
 		return 0;
 	}
@@ -821,7 +822,7 @@ static void dump_devs(struct btrfs_fs_info *fs_info, int all)
 	struct btrfs_device *device;
 	struct btrfs_fs_devices *fs_devices = fs_info->fs_devices;
 	unsigned long index;
-	int ret;
+	struct reada_extent *re;
 	int i;
 	int j;
 	int cnt;
@@ -845,15 +846,11 @@ static void dump_devs(struct btrfs_fs_info *fs_info, int all)
 					device->reada_next - zone->start);
 			pr_cont("\n");
 		}
-		cnt = 0;
-		index = 0;
-		while (all) {
-			struct reada_extent *re = NULL;
+		if (!all)
+			continue;
 
-			ret = radix_tree_gang_lookup(&device->reada_extents,
-						     (void **)&re, index, 1);
-			if (ret == 0)
-				break;
+		cnt = 0;
+		xa_for_each(&device->reada_extents, index, re) {
 			pr_debug("  re: logical %llu size %u empty %d scheduled %d",
 				re->logical, fs_info->nodesize,
 				list_empty(&re->extctl), re->scheduled);
@@ -868,7 +865,6 @@ static void dump_devs(struct btrfs_fs_info *fs_info, int all)
 				}
 			}
 			pr_cont("\n");
-			index = (re->logical >> PAGE_SHIFT) + 1;
 			if (++cnt > 15)
 				break;
 		}

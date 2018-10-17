@@ -138,7 +138,7 @@ struct btrfs_device {
 	u64 reada_next;
 	struct reada_zone *reada_curr_zone;
 	struct xarray reada_zones;
-	struct radix_tree_root reada_extents;
+	struct xarray reada_extents;
 
 	/* disk I/O failure stats. For detailed description refer to
 	 * enum btrfs_dev_stat_values in ioctl.h */
