@@ -9887,7 +9887,11 @@ btrfs_create_block_group_cache(struct btrfs_fs_info *fs_info,
 	btrfs_init_free_space_ctl(cache);
 	atomic_set(&cache->trimming, 0);
 	mutex_init(&cache->free_space_lock);
-	btrfs_init_full_stripe_locks_tree(&cache->full_stripe_locks_root);
+	cache->full_stripe_locks_root.root = RB_ROOT;
+	mutex_init(&cache->full_stripe_locks_root.lock);
+#ifdef CONFIG_DEBUG_LOCK_ALLOC
+	cache->full_stripe_locks_root.fs_info = fs_info;
+#endif
 
 	return cache;
 }
