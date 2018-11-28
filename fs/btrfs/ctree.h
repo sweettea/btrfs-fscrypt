@@ -3698,7 +3698,7 @@ static inline int btrfs_defrag_cancelled(struct btrfs_fs_info *fs_info)
 #ifdef CONFIG_LOCKDEP
 
 #define lockdep_assert_not_held(l)	do {				\
-		WARN_ON(debug_locks && lockdep_is_held(l));		\
+		WARN_ON_ONCE(debug_locks && lockdep_is_held(l));	\
 	} while (0)
 
 #else
