@@ -1631,7 +1631,8 @@ static int scrub_add_page_to_wr_bio(struct scrub_ctx *sctx,
 	struct scrub_bio *sbio;
 	int ret;
 
-	WARN_ON_ONCE(!memalloc_nofs_set());
+	/* set next to the allocation */
+	/* WARN_ON_ONCE(!memalloc_nofs_set()); */
 	lockdep_assert_not_held(&sctx->fs_info->fs_devices->device_list_mutex);
 
 	mutex_lock(&sctx->wr_lock);
