@@ -3698,6 +3698,19 @@ static inline int btrfs_defrag_cancelled(struct btrfs_fs_info *fs_info)
 	return signal_pending(current);
 }
 
+#ifdef CONFIG_LOCKDEP
+
+#define lockdep_assert_not_held(l)	do {				\
+		WARN_ON(debug_locks && lockdep_is_held(l));		\
+	} while (0)
+
+#else
+
+/* Don't evaluate parameter */
+#define lockdep_assert_not_held(l)	do { } while (0)
+
+#endif
+
 /* Sanity test specific functions */
 #ifdef CONFIG_BTRFS_FS_RUN_SANITY_TESTS
 void btrfs_test_inode_set_ops(struct inode *inode);
