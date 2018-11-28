@@ -1621,6 +1621,9 @@ static int scrub_add_page_to_wr_bio(struct scrub_ctx *sctx,
 	struct scrub_bio *sbio;
 	int ret;
 
+	WARN_ON(!memalloc_nofs_set());
+	lockdep_assert_not_held(&sctx->fs_info->fs_devices->device_list_mutex);
+
 	mutex_lock(&sctx->wr_lock);
 again:
 	if (!sctx->wr_curr_bio) {
@@ -2206,6 +2209,9 @@ static int scrub_pages(struct scrub_ctx *sctx, u64 logical, u64 len,
 	struct scrub_block *sblock;
 	int index;
 
+	WARN_ON(!memalloc_nofs_set());
+	lockdep_assert_not_held(&sctx->fs_info->fs_devices->device_list_mutex);
+
 	sblock = kzalloc(sizeof(*sblock), GFP_KERNEL);
 	if (!sblock) {
 		spin_lock(&sctx->stat_lock);
@@ -2510,6 +2516,9 @@ static int scrub_pages_for_parity(struct scrub_parity *sparity,
 	struct scrub_ctx *sctx = sparity->sctx;
 	struct scrub_block *sblock;
 	int index;
+
+	WARN_ON(!memalloc_nofs_set());
+	lockdep_assert_not_held(&sctx->fs_info->fs_devices->device_list_mutex);
 
 	sblock = kzalloc(sizeof(*sblock), GFP_KERNEL);
 	if (!sblock) {
