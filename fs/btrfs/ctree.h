@@ -3708,6 +3708,12 @@ static inline int btrfs_defrag_cancelled(struct btrfs_fs_info *fs_info)
 
 #endif
 
+/* Assert if memalloc_nofs_save was called before or we're safe for GFP_NOFS */
+static inline bool memalloc_nofs_set(void)
+{
+	return !!(current->flags & PF_MEMALLOC_NOFS);
+}
+
 /* Sanity test specific functions */
 #ifdef CONFIG_BTRFS_FS_RUN_SANITY_TESTS
 void btrfs_test_inode_set_ops(struct inode *inode);
