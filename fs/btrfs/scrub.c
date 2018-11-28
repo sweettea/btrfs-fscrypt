@@ -339,6 +339,8 @@ static struct full_stripe_lock *insert_full_stripe_lock(
 		}
 	}
 
+	lockdep_assert_not_held(&locks_root->fs_info->fs_devices->device_list_mutex);
+
 	/* Insert new lock */
 	ret = kmalloc(sizeof(*ret), GFP_KERNEL);
 	if (!ret)
@@ -574,6 +576,8 @@ struct scrub_ctx *scrub_setup_ctx(struct btrfs_device *dev, int is_dev_replace)
 	struct scrub_ctx *sctx;
 	int		i;
 	struct btrfs_fs_info *fs_info = dev->fs_info;
+
+	lockdep_assert_not_held(&fs_info->fs_devices->device_list_mutex);
 
 	sctx = kzalloc(sizeof(*sctx), GFP_KERNEL);
 	if (!sctx)
