@@ -30,6 +30,7 @@
 #include <linux/slab.h>
 #include <linux/percpu-rwsem.h>
 #include <linux/torture.h>
+#include <linux/sched/clock.h>
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Paul E. McKenney <paulmck@linux.ibm.com>");
@@ -81,7 +82,7 @@ struct lock_torture_ops {
 	void (*writeunlock)(void);
 	int (*readlock)(void);
 	void (*read_delay)(struct torture_random_state *trsp);
-	void (*readunlock)(void);
+	void (*readunlock)(int x);
 
 	unsigned long flags; /* for irq spinlocks */
 	const char *name;
@@ -259,7 +260,7 @@ static void torture_rwlock_read_delay(struct torture_random_state *trsp)
 		udelay(shortdelay_us);
 }
 
-static void torture_rwlock_read_unlock(void) __releases(torture_rwlock)
+static void torture_rwlock_read_unlock(int x) __releases(torture_rwlock)
 {
 	read_unlock(&torture_rwlock);
 }
@@ -299,7 +300,7 @@ static int torture_rwlock_read_lock_irq(void) __acquires(torture_rwlock)
 	return 0;
 }
 
-static void torture_rwlock_read_unlock_irq(void)
+static void torture_rwlock_read_unlock_irq(int x)
 __releases(torture_rwlock)
 {
 	read_unlock_irqrestore(&torture_rwlock, cxt.cur_ops->flags);
@@ -554,7 +555,7 @@ static void torture_rwsem_read_delay(struct torture_random_state *trsp)
 		torture_preempt_schedule();  /* Allow test to be preempted. */
 }
 
-static void torture_rwsem_up_read(void) __releases(torture_rwsem)
+static void torture_rwsem_up_read(int x) __releases(torture_rwsem)
 {
 	up_read(&torture_rwsem);
 }
@@ -595,7 +596,7 @@ static int torture_percpu_rwsem_down_read(void) __acquires(pcpu_rwsem)
 	return 0;
 }
 
-static void torture_percpu_rwsem_up_read(void) __releases(pcpu_rwsem)
+static void torture_percpu_rwsem_up_read(int x) __releases(pcpu_rwsem)
 {
 	percpu_up_read(&pcpu_rwsem);
 }
@@ -636,8 +637,13 @@ static void torture_btrfs_tree_lock_init(void)
 
 static int torture_btrfs_tree_lock(void)
 {
+	const int blocking = local_clock() % 2;
+
 	btrfs_tree_lock(&eb);
-	return 0;
+	if (blocking)
+		btrfs_set_lock_blocking_write(&eb);
+
+	return blocking;
 }
 
 static void torture_btrfs_write_delay(struct torture_random_state *trsp)
@@ -656,18 +662,23 @@ static void torture_btrfs_write_delay(struct torture_random_state *trsp)
 
 static void torture_btrfs_task_boost(struct torture_random_state *trsp)
 {
-	btrfs_set_lock_blocking_write(&eb);
+	/* btrfs_set_lock_blocking_write(&eb); */
 }
 
 static void torture_btrfs_tree_unlock(void)
 {
+	/* blocking and unblocking */
 	btrfs_tree_unlock(&eb);
 }
 
 static int torture_btrfs_tree_read_lock(void)
 {
+	const int blocking = local_clock() % 2;
+
 	btrfs_tree_read_lock(&eb);
-	return 0;
+	if (blocking)
+		btrfs_set_lock_blocking_read(&eb);
+	return blocking;
 }
 
 static void torture_btrfs_read_delay(struct torture_random_state *trsp)
@@ -684,9 +695,12 @@ static void torture_btrfs_read_delay(struct torture_random_state *trsp)
 		torture_preempt_schedule();  /* Allow test to be preempted. */
 }
 
-static void torture_btrfs_tree_read_unlock(void)
+static void torture_btrfs_tree_read_unlock(int x)
 {
-	btrfs_tree_read_unlock(&eb);
+	if (x)
+		btrfs_tree_read_unlock_blocking(&eb);
+	else
+		btrfs_tree_read_unlock(&eb);
 }
 
 static struct lock_torture_ops btrfs_tree_lock_ops = {
@@ -752,10 +766,12 @@ static int lock_torture_reader(void *arg)
 	set_user_nice(current, MAX_NICE);
 
 	do {
+		int x;
+
 		if ((torture_random(&rand) & 0xfffff) == 0)
 			schedule_timeout_uninterruptible(1);
 
-		cxt.cur_ops->readlock();
+		x = cxt.cur_ops->readlock();
 		lock_is_read_held = 1;
 		if (WARN_ON_ONCE(lock_is_write_held))
 			lrsp->n_lock_fail++; /* rare, but... */
@@ -763,7 +779,7 @@ static int lock_torture_reader(void *arg)
 		lrsp->n_lock_acquired++;
 		cxt.cur_ops->read_delay(&rand);
 		lock_is_read_held = 0;
-		cxt.cur_ops->readunlock();
+		cxt.cur_ops->readunlock(x);
 
 		stutter_wait("lock_torture_reader");
 	} while (!torture_must_stop());
