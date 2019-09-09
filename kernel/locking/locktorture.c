@@ -612,6 +612,96 @@ static struct lock_torture_ops percpu_rwsem_lock_ops = {
 	.name		= "percpu_rwsem_lock"
 };
 
+#if IS_ENABLED(CONFIG_BTRFS_FS)
+#include <linux/blk_types.h>
+#include "../../fs/btrfs/extent_io.h"
+#include "../../fs/btrfs/locking.h"
+
+static struct extent_buffer eb;
+
+static void torture_btrfs_tree_lock_init(void)
+{
+	rwlock_init(&eb.lock);
+	atomic_set(&eb.blocking_readers, 0);
+	eb.blocking_writers = 0;
+	eb.lock_nested = false;
+	init_waitqueue_head(&eb.write_lock_wq);
+	init_waitqueue_head(&eb.read_lock_wq);
+
+	spin_lock_init(&eb.refs_lock);
+	atomic_set(&eb.refs, 1);
+	atomic_set(&eb.io_pages, 0);
+
+}
+
+static int torture_btrfs_tree_lock(void)
+{
+	btrfs_tree_lock(&eb);
+	return 0;
+}
+
+static void torture_btrfs_write_delay(struct torture_random_state *trsp)
+{
+	const unsigned long longdelay_ms = 100;
+
+	/* We want a long delay occasionally to force massive contention.  */
+	if (!(torture_random(trsp) %
+	      (cxt.nrealwriters_stress * 2000 * longdelay_ms)))
+		mdelay(longdelay_ms * 10);
+	else
+		mdelay(longdelay_ms / 10);
+	if (!(torture_random(trsp) % (cxt.nrealwriters_stress * 20000)))
+		torture_preempt_schedule();  /* Allow test to be preempted. */
+}
+
+static void torture_btrfs_task_boost(struct torture_random_state *trsp)
+{
+	btrfs_set_lock_blocking_write(&eb);
+}
+
+static void torture_btrfs_tree_unlock(void)
+{
+	btrfs_tree_unlock(&eb);
+}
+
+static int torture_btrfs_tree_read_lock(void)
+{
+	btrfs_tree_read_lock(&eb);
+	return 0;
+}
+
+static void torture_btrfs_read_delay(struct torture_random_state *trsp)
+{
+	const unsigned long longdelay_ms = 100;
+
+	/* We want a long delay occasionally to force massive contention.  */
+	if (!(torture_random(trsp) %
+	      (cxt.nrealreaders_stress * 2000 * longdelay_ms)))
+		mdelay(longdelay_ms * 2);
+	else
+		mdelay(longdelay_ms / 2);
+	if (!(torture_random(trsp) % (cxt.nrealreaders_stress * 20000)))
+		torture_preempt_schedule();  /* Allow test to be preempted. */
+}
+
+static void torture_btrfs_tree_read_unlock(void)
+{
+	btrfs_tree_read_unlock(&eb);
+}
+
+static struct lock_torture_ops btrfs_tree_lock_ops = {
+	.init		= torture_btrfs_tree_lock_init,
+	.writelock	= torture_btrfs_tree_lock,
+	.write_delay	= torture_btrfs_write_delay,
+	.task_boost	= torture_btrfs_task_boost,
+	.writeunlock	= torture_btrfs_tree_unlock,
+	.readlock	= torture_btrfs_tree_read_lock,
+	.read_delay	= torture_btrfs_read_delay,
+	.readunlock	= torture_btrfs_tree_read_unlock,
+	.name		= "btrfs_tree_lock",
+};
+#endif
+
 /*
  * Lock torture writer kthread.  Repeatedly acquires and releases
  * the lock, checking for duplicate acquisitions.
@@ -852,6 +942,9 @@ static int __init lock_torture_init(void)
 #endif
 		&rwsem_lock_ops,
 		&percpu_rwsem_lock_ops,
+#if IS_ENABLED(CONFIG_BTRFS_FS)
+		&btrfs_tree_lock_ops,
+#endif
 	};
 
 	if (!torture_init_begin(torture_type, verbose))
