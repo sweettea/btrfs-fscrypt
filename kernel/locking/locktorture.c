@@ -66,6 +66,7 @@ static bool lock_is_read_held;
 struct lock_stress_stats {
 	long n_lock_fail;
 	long n_lock_acquired;
+	long n_lock_nested_acquired;
 	long n_lock_try_failed;
 };
 
@@ -93,6 +94,7 @@ struct lock_torture_ops {
 
 	unsigned long flags; /* for irq spinlocks */
 	const char *name;
+	bool allow_nested_read_from_write;
 };
 
 struct lock_torture_cxt {
@@ -750,6 +752,7 @@ static struct lock_torture_ops btrfs_tree_lock_ops = {
 	.read_delay	= torture_btrfs_read_delay,
 	.readunlock	= torture_btrfs_tree_read_unlock,
 	.name		= "btrfs_tree_lock",
+	.allow_nested_read_from_write = true,
 };
 #endif
 
@@ -785,6 +788,38 @@ static int lock_torture_writer(void *arg)
 
 		lwsp->n_lock_acquired++;
 		cxt.cur_ops->write_delay(&rand);
+		/*
+		 * write must be blocking, ie. rwlock is free, else this
+		 * would deadlock in readlock()
+		 */
+		if (cxt.cur_ops->allow_nested_read_from_write &&
+		    ls == LOCK_LOCKED_BLOCKING) {
+			/* 1/64 == 1.56% to do nesting */
+			if ((torture_random(&rand) & 63) != 0)
+				goto nolock_read;
+			/* copy from reader */
+			ls = cxt.cur_ops->readlock();
+			if (ls == LOCK_TRY_FAILED) {
+				/*
+				 * both try-tree-lock will fail on blocking
+				 * writers, skip for now
+				 *
+				 * only btrfs_tree_read_lock shall pass
+				 */
+				goto nolock_read;
+			}
+			lock_is_read_held = 1;
+			/* set a few lines above, but ... */
+			if (WARN_ON_ONCE(!lock_is_write_held))
+				lwsp->n_lock_fail++;
+
+			lwsp->n_lock_nested_acquired++;
+			cxt.cur_ops->read_delay(&rand);
+			lock_is_read_held = 0;
+			cxt.cur_ops->readunlock(ls);
+
+		}
+nolock_read:
 		lock_is_write_held = 0;
 		cxt.cur_ops->writeunlock();
 
@@ -845,7 +880,7 @@ static void __torture_print_stats(char *page,
 	bool fail = 0;
 	int i, n_stress;
 	long max = 0, min = statp ? statp[0].n_lock_acquired : 0;
-	long long sum = 0, try = 0;
+	long long sum = 0, try = 0, nest = 0;
 
 	n_stress = write ? cxt.nrealwriters_stress : cxt.nrealreaders_stress;
 	for (i = 0; i < n_stress; i++) {
@@ -853,15 +888,16 @@ static void __torture_print_stats(char *page,
 			fail = true;
 		sum += statp[i].n_lock_acquired;
 		try += statp[i].n_lock_try_failed;
+		nest += statp[i].n_lock_nested_acquired;
 		if (max < statp[i].n_lock_fail)
 			max = statp[i].n_lock_fail;
 		if (min > statp[i].n_lock_fail)
 			min = statp[i].n_lock_fail;
 	}
 	page += sprintf(page,
-			"%s:  Total: %lld  Try: %lld Max/Min: %ld/%ld %s  Fail: %d %s\n",
+			"%s:  Total: %lld  Try: %lld  Nest: %lld  Max/Min: %ld/%ld %s  Fail: %d %s\n",
 			write ? "Writes" : "Reads ",
-			sum, try,
+			sum, try, nest,
 			max, min, max / 2 > min ? "???" : "",
 			fail, fail ? "!!!" : "");
 	if (fail)
@@ -1077,6 +1113,7 @@ static int __init lock_torture_init(void)
 		for (i = 0; i < cxt.nrealwriters_stress; i++) {
 			cxt.lwsa[i].n_lock_fail = 0;
 			cxt.lwsa[i].n_lock_acquired = 0;
+			cxt.lwsa[i].n_lock_nested_acquired = 0;
 			cxt.lwsa[i].n_lock_try_failed = 0;
 		}
 	}
@@ -1111,6 +1148,7 @@ static int __init lock_torture_init(void)
 			for (i = 0; i < cxt.nrealreaders_stress; i++) {
 				cxt.lrsa[i].n_lock_fail = 0;
 				cxt.lrsa[i].n_lock_acquired = 0;
+				cxt.lrsa[i].n_lock_nested_acquired = 0;
 				cxt.lrsa[i].n_lock_try_failed = 0;
 			}
 		}

@@ -324,6 +324,7 @@ void btrfs_tree_unlock(struct extent_buffer *eb)
 }
 
 #ifdef CONFIG_LOCK_TORTURE_TEST
+#endif
 EXPORT_SYMBOL_GPL(btrfs_tree_lock);
 EXPORT_SYMBOL_GPL(btrfs_tree_unlock);
 EXPORT_SYMBOL_GPL(btrfs_tree_read_lock);
@@ -334,4 +335,3 @@ EXPORT_SYMBOL_GPL(btrfs_set_lock_blocking_write);
 EXPORT_SYMBOL_GPL(btrfs_tree_read_lock_atomic);
 EXPORT_SYMBOL_GPL(btrfs_try_tree_read_lock);
 EXPORT_SYMBOL_GPL(btrfs_try_tree_write_lock);
-#endif
