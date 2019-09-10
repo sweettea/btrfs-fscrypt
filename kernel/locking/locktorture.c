@@ -644,13 +644,26 @@ static void torture_btrfs_tree_lock_init(void)
 
 static int torture_btrfs_tree_lock(void)
 {
-	const int blocking = local_clock() % 2;
+	const int type = local_clock() % 4;
+	int ret = LOCK_LOCKED;
 
-	btrfs_tree_lock(&eb);
-	if (blocking)
-		btrfs_set_lock_blocking_write(&eb);
+	switch (type) {
+	case 0:
+		if (!btrfs_try_tree_write_lock(&eb))
+			ret = LOCK_TRY_FAILED;
+		break;
+	case 1:
+	case 2:
+	case 3:
+		btrfs_tree_lock(&eb);
+		if (type == 3) {
+			btrfs_set_lock_blocking_write(&eb);
+			ret = LOCK_LOCKED_BLOCKING;
+		}
+		break;
+	}
 
-	return blocking;
+	return ret;
 }
 
 static void torture_btrfs_write_delay(struct torture_random_state *trsp)

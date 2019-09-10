@@ -332,3 +332,4 @@ EXPORT_SYMBOL_GPL(btrfs_set_lock_blocking_read);
 EXPORT_SYMBOL_GPL(btrfs_set_lock_blocking_write);
 EXPORT_SYMBOL_GPL(btrfs_tree_read_lock_atomic);
 EXPORT_SYMBOL_GPL(btrfs_try_tree_read_lock);
+EXPORT_SYMBOL_GPL(btrfs_try_tree_write_lock);
