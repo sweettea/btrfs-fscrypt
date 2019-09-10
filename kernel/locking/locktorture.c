@@ -1064,6 +1064,7 @@ static int __init lock_torture_init(void)
 		for (i = 0; i < cxt.nrealwriters_stress; i++) {
 			cxt.lwsa[i].n_lock_fail = 0;
 			cxt.lwsa[i].n_lock_acquired = 0;
+			cxt.lwsa[i].n_lock_try_failed = 0;
 		}
 	}
 
@@ -1097,6 +1098,7 @@ static int __init lock_torture_init(void)
 			for (i = 0; i < cxt.nrealreaders_stress; i++) {
 				cxt.lrsa[i].n_lock_fail = 0;
 				cxt.lrsa[i].n_lock_acquired = 0;
+				cxt.lrsa[i].n_lock_try_failed = 0;
 			}
 		}
 	}
