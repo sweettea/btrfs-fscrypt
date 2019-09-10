@@ -721,7 +721,7 @@ static void torture_btrfs_read_delay(struct torture_random_state *trsp)
 
 static void torture_btrfs_tree_read_unlock(int x)
 {
-	if (x)
+	if (x == LOCK_LOCKED_BLOCKING)
 		btrfs_tree_read_unlock_blocking(&eb);
 	else
 		btrfs_tree_read_unlock(&eb);
