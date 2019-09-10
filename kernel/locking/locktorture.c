@@ -66,10 +66,17 @@ static bool lock_is_read_held;
 struct lock_stress_stats {
 	long n_lock_fail;
 	long n_lock_acquired;
+	long n_lock_try_failed;
 };
 
 /* Forward reference. */
 static void lock_torture_cleanup(void);
+
+enum lock_status {
+	LOCK_LOCKED,
+	LOCK_LOCKED_BLOCKING,
+	LOCK_TRY_FAILED,
+};
 
 /*
  * Operations vector for selecting different types of tests.
@@ -673,12 +680,29 @@ static void torture_btrfs_tree_unlock(void)
 
 static int torture_btrfs_tree_read_lock(void)
 {
-	const int blocking = local_clock() % 2;
+	const int type = local_clock() % 4;
+	int ret = LOCK_LOCKED;;
 
-	btrfs_tree_read_lock(&eb);
-	if (blocking)
-		btrfs_set_lock_blocking_read(&eb);
-	return blocking;
+	switch (type) {
+	case 0:
+		if (!btrfs_try_tree_read_lock(&eb))
+			ret = LOCK_TRY_FAILED;
+		break;
+	case 1:
+		if (!btrfs_tree_read_lock_atomic(&eb))
+			ret = LOCK_TRY_FAILED;
+		break;
+	case 2:
+	case 3:
+		btrfs_tree_read_lock(&eb);
+		if (type == 3) {
+			btrfs_set_lock_blocking_read(&eb);
+			ret = LOCK_LOCKED_BLOCKING;
+		}
+		break;
+	}
+
+	return ret;
 }
 
 static void torture_btrfs_read_delay(struct torture_random_state *trsp)
@@ -729,11 +753,17 @@ static int lock_torture_writer(void *arg)
 	set_user_nice(current, MAX_NICE);
 
 	do {
+		enum lock_status ls;
+
 		if ((torture_random(&rand) & 0xfffff) == 0)
 			schedule_timeout_uninterruptible(1);
 
 		cxt.cur_ops->task_boost(&rand);
-		cxt.cur_ops->writelock();
+		ls = cxt.cur_ops->writelock();
+		if (ls == LOCK_TRY_FAILED) {
+			lwsp->n_lock_try_failed++;
+			goto nolock;
+		}
 		if (WARN_ON_ONCE(lock_is_write_held))
 			lwsp->n_lock_fail++;
 		lock_is_write_held = 1;
@@ -745,6 +775,7 @@ static int lock_torture_writer(void *arg)
 		lock_is_write_held = 0;
 		cxt.cur_ops->writeunlock();
 
+nolock:
 		stutter_wait("lock_torture_writer");
 	} while (!torture_must_stop());
 
@@ -766,12 +797,16 @@ static int lock_torture_reader(void *arg)
 	set_user_nice(current, MAX_NICE);
 
 	do {
-		int x;
+		enum lock_status ls;
 
 		if ((torture_random(&rand) & 0xfffff) == 0)
 			schedule_timeout_uninterruptible(1);
 
-		x = cxt.cur_ops->readlock();
+		ls = cxt.cur_ops->readlock();
+		if (ls == LOCK_TRY_FAILED) {
+			lrsp->n_lock_try_failed++;
+			goto nolock;
+		}
 		lock_is_read_held = 1;
 		if (WARN_ON_ONCE(lock_is_write_held))
 			lrsp->n_lock_fail++; /* rare, but... */
@@ -779,8 +814,9 @@ static int lock_torture_reader(void *arg)
 		lrsp->n_lock_acquired++;
 		cxt.cur_ops->read_delay(&rand);
 		lock_is_read_held = 0;
-		cxt.cur_ops->readunlock(x);
+		cxt.cur_ops->readunlock(ls);
 
+nolock:
 		stutter_wait("lock_torture_reader");
 	} while (!torture_must_stop());
 	torture_kthread_stopping("lock_torture_reader");
@@ -796,22 +832,24 @@ static void __torture_print_stats(char *page,
 	bool fail = 0;
 	int i, n_stress;
 	long max = 0, min = statp ? statp[0].n_lock_acquired : 0;
-	long long sum = 0;
+	long long sum = 0, try = 0;
 
 	n_stress = write ? cxt.nrealwriters_stress : cxt.nrealreaders_stress;
 	for (i = 0; i < n_stress; i++) {
 		if (statp[i].n_lock_fail)
 			fail = true;
 		sum += statp[i].n_lock_acquired;
+		try += statp[i].n_lock_try_failed;
 		if (max < statp[i].n_lock_fail)
 			max = statp[i].n_lock_fail;
 		if (min > statp[i].n_lock_fail)
 			min = statp[i].n_lock_fail;
 	}
 	page += sprintf(page,
-			"%s:  Total: %lld  Max/Min: %ld/%ld %s  Fail: %d %s\n",
+			"%s:  Total: %lld  Try: %lld Max/Min: %ld/%ld %s  Fail: %d %s\n",
 			write ? "Writes" : "Reads ",
-			sum, max, min, max / 2 > min ? "???" : "",
+			sum, try,
+			max, min, max / 2 > min ? "???" : "",
 			fail, fail ? "!!!" : "");
 	if (fail)
 		atomic_inc(&cxt.n_lock_torture_errors);
