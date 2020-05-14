@@ -373,6 +373,8 @@ enum {
 	Opt_thread_pool,
 	Opt_treelog, Opt_notreelog,
 	Opt_user_subvol_rm_allowed,
+	Opt_auth_key,
+	Opt_auth_hash_name,
 
 	/* Rescue options */
 	Opt_rescue,
@@ -446,6 +448,8 @@ static const match_table_t tokens = {
 	{Opt_treelog, "treelog"},
 	{Opt_notreelog, "notreelog"},
 	{Opt_user_subvol_rm_allowed, "user_subvol_rm_allowed"},
+	{Opt_auth_key, "auth_key=%s"},
+	{Opt_auth_hash_name, "auth_hash_name=%s"},
 
 	/* Rescue options */
 	{Opt_rescue, "rescue=%s"},
@@ -615,6 +619,11 @@ int btrfs_parse_options(struct btrfs_fs_info *info, char *options,
 			 */
 			break;
 		case Opt_nodatasum:
+			if (btrfs_test_opt(info, AUTH_KEY)) {
+				btrfs_info(info,
+					   "nodatasum not supported on an authnticated file-system");
+				break;
+			}
 			btrfs_set_and_info(info, NODATASUM,
 					   "setting nodatasum");
 			break;
@@ -630,6 +639,11 @@ int btrfs_parse_options(struct btrfs_fs_info *info, char *options,
 			btrfs_clear_opt(info->mount_opt, NODATASUM);
 			break;
 		case Opt_nodatacow:
+			if (btrfs_test_opt(info, AUTH_KEY)) {
+				btrfs_info(info,
+					   "nodatacow not supported on an authnticated file-system");
+				break;
+			}
 			if (!btrfs_test_opt(info, NODATACOW)) {
 				if (!btrfs_test_opt(info, COMPRESS) ||
 				    !btrfs_test_opt(info, FORCE_COMPRESS)) {
@@ -1083,7 +1097,8 @@ static int btrfs_parse_device_options(const char *options, fmode_t flags,
 			continue;
 
 		token = match_token(p, tokens, args);
-		if (token == Opt_device) {
+		switch (token) {
+		case Opt_device:
 			device_name = match_strdup(&args[0]);
 			if (!device_name) {
 				error = -ENOMEM;
@@ -1096,7 +1111,38 @@ static int btrfs_parse_device_options(const char *options, fmode_t flags,
 				error = PTR_ERR(device);
 				goto out;
 			}
+			break;
+		case Opt_auth_key:
+			info->auth_key_name = match_strdup(&args[0]);
+			if (!info->auth_key_name) {
+				error = -ENOMEM;
+				goto out;
+			}
+			break;
+		case Opt_auth_hash_name:
+			info->auth_hash_name = match_strdup(&args[0]);
+			if (!info->auth_hash_name) {
+				error = -ENOMEM;
+				goto out;
+			}
+			break;
+		default:
+			break;
 		}
+	}
+
+	/*
+	 * Check that both auth_key_name and auth_hash_name are either present
+	 * or absent and error out if only one of them is set.
+	 */
+	if (info->auth_key_name && info->auth_hash_name) {
+		btrfs_info(info, "doing authentication");
+		btrfs_set_opt(info->mount_opt, AUTH_KEY);
+	} else if ((info->auth_key_name && !info->auth_hash_name) ||
+		   (!info->auth_key_name && info->auth_hash_name)) {
+		btrfs_err(info,
+			  "auth_key and auth_hash_name must be supplied together");
+		error = -EINVAL;
 	}
 
 out:
@@ -1538,6 +1584,8 @@ static int btrfs_show_options(struct seq_file *seq, struct dentry *dentry)
 #endif
 	if (btrfs_test_opt(info, REF_VERIFY))
 		seq_puts(seq, ",ref_verify");
+	if (btrfs_test_opt(info, AUTH_KEY))
+		seq_printf(seq, ",auth_key=%s", info->auth_key_name);
 	seq_printf(seq, ",subvolid=%llu",
 		  BTRFS_I(d_inode(dentry))->root->root_key.objectid);
 	subvol_name = btrfs_get_subvol_name_from_objectid(info,
@@ -2700,4 +2748,5 @@ MODULE_LICENSE("GPL");
 MODULE_SOFTDEP("pre: crc32c");
 MODULE_SOFTDEP("pre: xxhash64");
 MODULE_SOFTDEP("pre: sha256");
+MODULE_SOFTDEP("pre: hmac");
 MODULE_SOFTDEP("pre: blake2b-256");
