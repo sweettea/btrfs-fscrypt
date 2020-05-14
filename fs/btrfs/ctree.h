@@ -960,6 +960,8 @@ struct btrfs_fs_info {
 	struct rb_root swapfile_pins;
 
 	struct crypto_shash *csum_shash;
+	char *auth_key_name;
+	char *auth_hash_name;
 
 	/*
 	 * Number of send operations in progress.
@@ -1382,6 +1384,7 @@ static inline u32 BTRFS_MAX_XATTR_SIZE(const struct btrfs_fs_info *info)
 #define BTRFS_MOUNT_DISCARD_ASYNC	(1 << 29)
 #define BTRFS_MOUNT_IGNOREBADROOTS	(1 << 30)
 #define BTRFS_MOUNT_IGNOREDATACSUMS	(1 << 31)
+#define BTRFS_MOUNT_AUTH_KEY		(1 << 32)
 
 #define BTRFS_DEFAULT_COMMIT_INTERVAL	(30)
 #define BTRFS_DEFAULT_MAX_INLINE	(2048)
@@ -2385,7 +2388,7 @@ BTRFS_SETGET_STACK_FUNCS(super_uuid_tree_generation, struct btrfs_super_block,
 
 int btrfs_super_csum_size(const struct btrfs_super_block *s);
 const char *btrfs_super_csum_name(u16 csum_type);
-const char *btrfs_super_csum_driver(u16 csum_type);
+const char *btrfs_super_csum_driver(struct btrfs_fs_info *info, u16 csum_type);
 size_t __attribute_const__ btrfs_get_num_csums(void);
 
 

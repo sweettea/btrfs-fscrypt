@@ -17,6 +17,7 @@
 #include <linux/error-injection.h>
 #include <linux/crc32c.h>
 #include <linux/sched/mm.h>
+#include <keys/user-type.h>
 #include <asm/unaligned.h>
 #include <crypto/hash.h>
 #include "ctree.h"
@@ -99,8 +100,10 @@ void __cold btrfs_end_io_wq_exit(void)
 
 static void btrfs_free_csum_hash(struct btrfs_fs_info *fs_info)
 {
-	if (fs_info->csum_shash)
+	if (fs_info->csum_shash) {
 		crypto_free_shash(fs_info->csum_shash);
+		fs_info->csum_shash = NULL;
+	}
 }
 
 /*
@@ -289,6 +292,7 @@ static bool btrfs_supported_super_csum(u16 csum_type)
 	case BTRFS_CSUM_TYPE_XXHASH:
 	case BTRFS_CSUM_TYPE_SHA256:
 	case BTRFS_CSUM_TYPE_BLAKE2:
+	case BTRFS_CSUM_TYPE_HMAC_SHA256:
 		return true;
 	default:
 		return false;
@@ -1560,6 +1564,8 @@ void btrfs_free_fs_info(struct btrfs_fs_info *fs_info)
 	percpu_counter_destroy(&fs_info->ordered_bytes);
 	percpu_counter_destroy(&fs_info->dev_replace.bio_counter);
 	btrfs_free_csum_hash(fs_info);
+	kfree(fs_info->auth_key_name);
+	kfree(fs_info->auth_hash_name);
 	btrfs_free_stripe_hash_table(fs_info);
 	btrfs_free_ref_cache(fs_info);
 	kfree(fs_info->balance_ctl);
@@ -2286,10 +2292,16 @@ static int btrfs_init_workqueues(struct btrfs_fs_info *fs_info,
 static int btrfs_init_csum_hash(struct btrfs_fs_info *fs_info, u16 csum_type)
 {
 	struct crypto_shash *csum_shash;
-	const char *csum_driver = btrfs_super_csum_driver(csum_type);
+	const char *csum_driver;
+	struct key *key;
+	const struct user_key_payload *ukp;
+	int err = -EINVAL;
+
+	csum_driver = btrfs_super_csum_driver(fs_info, csum_type);
+	if (!csum_driver)
+		return err;
 
 	csum_shash = crypto_alloc_shash(csum_driver, 0, 0);
-
 	if (IS_ERR(csum_shash)) {
 		btrfs_err(fs_info, "error allocating %s hash for checksum",
 			  csum_driver);
@@ -2298,7 +2310,57 @@ static int btrfs_init_csum_hash(struct btrfs_fs_info *fs_info, u16 csum_type)
 
 	fs_info->csum_shash = csum_shash;
 
-	return 0;
+	/*
+	 * If we're not doing authentication, we're done by now. If we use
+	 * authentication and the auth_hash_name was bogus crypt_alloc_shash
+	 * would have dropped out by now. Validation that both auth_hash_name
+	 * and auth_key_name have been supplied is done in
+	 * btrfs_parse_early_options(), so we should be good to go from here on
+	 * and start authenticating the file-system.
+	 */
+	if (!btrfs_test_opt(fs_info, AUTH_KEY))
+		return 0;
+
+	if (strncmp(fs_info->auth_key_name, "btrfs:", 6)) {
+		btrfs_err(fs_info,
+			  "authentication key must start with 'btrfs:'");
+		goto out_free_hash;
+	}
+
+	key = request_key(&key_type_logon, fs_info->auth_key_name, NULL);
+	if (IS_ERR(key)) {
+		err = PTR_ERR(key);
+		goto out_free_hash;
+	}
+
+	down_read(&key->sem);
+
+	ukp = user_key_payload_locked(key);
+	if (!ukp) {
+		btrfs_err(fs_info, "error getting payload for key %s",
+			  fs_info->auth_key_name);
+		err = -EKEYREVOKED;
+		goto out;
+	}
+
+	err = crypto_shash_setkey(fs_info->csum_shash, ukp->data, ukp->datalen);
+	if (err)
+		btrfs_err(fs_info, "error setting key %s for verification",
+			  fs_info->auth_key_name);
+
+out:
+	if (err) {
+		btrfs_free_csum_hash(fs_info);
+	}
+
+	up_read(&key->sem);
+	key_put(key);
+
+	return err;
+
+out_free_hash:
+	btrfs_free_csum_hash(fs_info);
+	return err;
 }
 
 static int btrfs_replay_log(struct btrfs_fs_info *fs_info,
@@ -3576,6 +3638,7 @@ fail_sb_buffer:
 	btrfs_stop_all_workers(fs_info);
 	btrfs_free_block_groups(fs_info);
 fail_alloc:
+	btrfs_free_csum_hash(fs_info);
 	btrfs_mapping_tree_free(&fs_info->mapping_tree);
 
 	iput(fs_info->btree_inode);

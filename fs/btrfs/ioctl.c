@@ -268,7 +268,12 @@ static int btrfs_ioctl_setflags(struct file *file, void __user *arg)
 	else
 		binode_flags &= ~BTRFS_INODE_DIRSYNC;
 	if (fsflags & FS_NOCOW_FL) {
-		if (S_ISREG(inode->i_mode)) {
+		if (btrfs_test_opt(fs_info, AUTH_KEY)) {
+			btrfs_err(fs_info,
+				  "Cannot set nodatacow or nodatasum on authenticated file-system");
+			ret = -EPERM;
+			goto out_unlock;
+		} else if (S_ISREG(inode->i_mode)) {
 			/*
 			 * It's safe to turn csums off here, no extents exist.
 			 * Otherwise we want the flag to reflect the real COW
