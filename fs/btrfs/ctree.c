@@ -43,6 +43,9 @@ static const struct btrfs_csums {
 	[BTRFS_CSUM_TYPE_AUTH_SHA256] = { .size = 32, .name = "auth-sha256",
 					  .driver = "hmac(sha256)",
 					  .flags = BTRFS_CSUM_TYPE_AUTH },
+	[BTRFS_CSUM_TYPE_AUTH_BLAKE2] = { .size = 32, .name = "auth-blake2b",
+					  .driver = "blake2b-256",
+					  .flags = BTRFS_CSUM_TYPE_AUTH },
 };
 
 int btrfs_super_csum_size(const struct btrfs_super_block *s)
