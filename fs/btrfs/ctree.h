@@ -2388,6 +2388,7 @@ BTRFS_SETGET_STACK_FUNCS(super_uuid_tree_generation, struct btrfs_super_block,
 enum {
 	BTRFS_CSUM_TYPE_PLAIN	= 0,
 	BTRFS_CSUM_TYPE_AUTH	= 1,
+	BTRFS_CSUM_TYPE_AUTHSUM	= 2,
 };
 
 int btrfs_super_csum_size(const struct btrfs_super_block *s);
@@ -2395,6 +2396,7 @@ const char *btrfs_super_csum_name(u16 csum_type);
 const char *btrfs_super_csum_driver(u16 csum_type);
 size_t __attribute_const__ btrfs_get_num_csums(void);
 int btrfs_auth_csum_name_valid(const char *name);
+bool btrfs_auth_csum_with_secondary(struct btrfs_fs_info *fs_info);
 
 /*
  * The leaf data grows from end-to-front in the node.

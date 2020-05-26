@@ -63,6 +63,13 @@ const char *btrfs_super_csum_name(u16 csum_type)
 	return btrfs_csums[csum_type].name;
 }
 
+bool btrfs_auth_csum_with_secondary(struct btrfs_fs_info *fs_info)
+{
+	const u16 primary = btrfs_super_csum_type(fs_info->super_copy);
+
+	return !!(btrfs_csums[primary].flags & BTRFS_CSUM_TYPE_AUTHSUM);
+}
+
 /*
  * Return driver name if defined, otherwise the name that's also a valid driver
  * name

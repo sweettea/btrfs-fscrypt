@@ -1710,6 +1710,7 @@ static noinline_for_stack int btrfsic_test_for_metadata(
 		return 1;
 
 	shash->tfm = fs_info->csum_shash;
+	/* TODO: secondary */
 	crypto_shash_init(shash);
 
 	for (i = 0; i < num_pages; i++) {

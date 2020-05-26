@@ -17,6 +17,7 @@
 #include <linux/error-injection.h>
 #include <linux/crc32c.h>
 #include <linux/sched/mm.h>
+#include <linux/xxhash.h>
 #include <keys/user-type.h>
 #include <asm/unaligned.h>
 #include <crypto/hash.h>
@@ -229,6 +230,23 @@ static void csum_tree_block(struct extent_buffer *buf, u8 *result)
 	}
 	memset(result, 0, BTRFS_CSUM_SIZE);
 	crypto_shash_final(shash, result);
+
+	if (btrfs_auth_csum_with_secondary(fs_info)) {
+		struct xxh64_state state;
+		u64 digest;
+		const int digest_size = sizeof(u64);
+
+		xxh64_reset(&state, 0);
+		kaddr = page_address(buf->pages[0]);
+		xxh64_update(&state, kaddr + BTRFS_CSUM_SIZE,
+			     PAGE_SIZE - BTRFS_CSUM_SIZE);
+		for (i = 1; i < num_pages; i++) {
+			kaddr = page_address(buf->pages[i]);
+			xxh64_update(&state, kaddr, PAGE_SIZE);
+		}
+		digest = xxh64_digest(&state);
+		memcpy(result + BTRFS_CSUM_SIZE - digest_size, &digest, digest_size);
+	}
 }
 
 /*

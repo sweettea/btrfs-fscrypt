@@ -6,6 +6,7 @@
 #include <linux/blkdev.h>
 #include <linux/ratelimit.h>
 #include <linux/sched/mm.h>
+#include <linux/xxhash.h>
 #include <crypto/hash.h>
 #include "ctree.h"
 #include "discard.h"
@@ -1838,6 +1839,18 @@ static int scrub_checksum_data(struct scrub_block *sblock)
 	 */
 	crypto_shash_digest(shash, kaddr, fs_info->sectorsize, csum);
 
+	if (btrfs_auth_csum_with_secondary(fs_info)) {
+		char *kaddr;
+		u64 digest;
+		const int digest_size = sizeof(u64);
+
+		BUG_ON(sctx->fs_info->sectorsize != PAGE_SIZE);
+
+		kaddr = page_address(sblock->pagev[0]->page);
+		digest = xxh64(kaddr, PAGE_SIZE, 0);
+		memcpy(csum + BTRFS_CSUM_SIZE - digest_size, &digest, digest_size);
+	}
+
 	if (memcmp(csum, spage->csum, fs_info->csum_size))
 		sblock->checksum_error = 1;
 	return sblock->checksum_error;
@@ -1903,6 +1916,27 @@ static int scrub_checksum_tree_block(struct scrub_block *sblock)
 	}
 
 	crypto_shash_final(shash, calculated_csum);
+
+	if (btrfs_auth_csum_with_secondary(fs_info)) {
+		char *kaddr;
+		struct xxh64_state state;
+		u64 digest;
+		const int digest_size = sizeof(u64);
+		const int num_pages = fs_info->nodesize >> PAGE_SHIFT;
+
+		xxh64_reset(&state, 0);
+		kaddr = page_address(sblock->pagev[0]->page);
+		xxh64_update(&state, kaddr + BTRFS_CSUM_SIZE,
+			     PAGE_SIZE - BTRFS_CSUM_SIZE);
+		for (i = 1; i < num_pages; i++) {
+			kaddr = page_address(sblock->pagev[i]->page);
+			xxh64_update(&state, kaddr, PAGE_SIZE);
+		}
+		digest = xxh64_digest(&state);
+		memcpy(calculated_csum + BTRFS_CSUM_SIZE - digest_size, &digest,
+		       digest_size);
+	}
+
 	if (memcmp(calculated_csum, on_disk_csum, sctx->fs_info->csum_size))
 		sblock->checksum_error = 1;
 
@@ -1939,6 +1973,18 @@ static int scrub_checksum_super(struct scrub_block *sblock)
 	crypto_shash_init(shash);
 	crypto_shash_digest(shash, kaddr + BTRFS_CSUM_SIZE,
 			BTRFS_SUPER_INFO_SIZE - BTRFS_CSUM_SIZE, calculated_csum);
+
+	if (btrfs_auth_csum_with_secondary(fs_info)) {
+		char *kaddr;
+		u64 digest;
+		const int digest_size = sizeof(u64);
+
+		kaddr = page_address(sblock->pagev[0]->page);
+		digest = xxh64(kaddr + BTRFS_CSUM_SIZE,
+			       PAGE_SIZE - BTRFS_CSUM_SIZE, 0);
+		memcpy(calculated_csum + BTRFS_CSUM_SIZE - digest_size, &digest,
+				digest_size);
+	}
 
 	if (memcmp(calculated_csum, s->csum, sctx->fs_info->csum_size))
 		++fail_cor;
