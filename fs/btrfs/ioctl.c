@@ -270,8 +270,10 @@ int btrfs_fileattr_set(struct user_namespace *mnt_userns,
 		binode_flags &= ~BTRFS_INODE_DIRSYNC;
 	if (fsflags & FS_NOCOW_FL) {
 		if (btrfs_test_opt(fs_info, AUTH_KEY)) {
-			btrfs_err(fs_info,
-				  "Cannot set nodatacow or nodatasum on authenticated file-system");
+			/*
+			 * Cannot set nodatacow or nodatasum on authenticated
+			 * filesystem
+			 */
 			return -EPERM;
 		} else if (S_ISREG(inode->i_mode)) {
 			/*
