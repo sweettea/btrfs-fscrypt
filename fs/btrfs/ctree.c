@@ -30,16 +30,19 @@ static void del_ptr(struct btrfs_root *root, struct btrfs_path *path,
 		    int level, int slot);
 
 static const struct btrfs_csums {
-	u16		size;
-	const char	name[12];
-	const char	driver[12];
+	u8		size;
+	u8		flags;
+	const char	name[16];
+	const char	driver[14];
 } btrfs_csums[] = {
 	[BTRFS_CSUM_TYPE_CRC32] = { .size = 4, .name = "crc32c" },
 	[BTRFS_CSUM_TYPE_XXHASH] = { .size = 8, .name = "xxhash64" },
 	[BTRFS_CSUM_TYPE_SHA256] = { .size = 32, .name = "sha256" },
 	[BTRFS_CSUM_TYPE_BLAKE2] = { .size = 32, .name = "blake2b",
 				     .driver = "blake2b-256" },
-	[BTRFS_CSUM_TYPE_HMAC_SHA256] = { .size = 32, .name = "hmac(sha256)" }
+	[BTRFS_CSUM_TYPE_AUTH_SHA256] = { .size = 32, .name = "auth-sha256",
+					  .driver = "hmac(sha256)",
+					  .flags = BTRFS_CSUM_TYPE_AUTH },
 };
 
 int btrfs_super_csum_size(const struct btrfs_super_block *s)
@@ -57,29 +60,12 @@ const char *btrfs_super_csum_name(u16 csum_type)
 	return btrfs_csums[csum_type].name;
 }
 
-static const char *btrfs_auth_csum_driver(struct btrfs_fs_info *fs_info)
-{
-	int i;
-
-	for (i = 0; i < ARRAY_SIZE(btrfs_csums); i++) {
-		if (!strncmp(fs_info->auth_hash_name, btrfs_csums[i].name,
-			     strlen(btrfs_csums[i].name)))
-			return btrfs_csums[i].driver[0] ?
-				btrfs_csums[i].driver : btrfs_csums[i].name;
-	}
-
-	return NULL;
-}
-
 /*
  * Return driver name if defined, otherwise the name that's also a valid driver
  * name
  */
-const char *btrfs_super_csum_driver(struct btrfs_fs_info *info, u16 csum_type)
+const char *btrfs_super_csum_driver(u16 csum_type)
 {
-	if (btrfs_test_opt(info, AUTH_KEY))
-		return btrfs_auth_csum_driver(info);
-
 	/* csum type is validated at mount time */
 	return btrfs_csums[csum_type].driver[0] ?
 		btrfs_csums[csum_type].driver :
@@ -89,6 +75,18 @@ const char *btrfs_super_csum_driver(struct btrfs_fs_info *info, u16 csum_type)
 size_t __attribute_const__ btrfs_get_num_csums(void)
 {
 	return ARRAY_SIZE(btrfs_csums);
+}
+
+int btrfs_auth_csum_name_valid(const char *name)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(btrfs_csums); i++) {
+		if (strcmp(name, btrfs_csums[i].name) == 0 &&
+		    btrfs_csums[i].flags & BTRFS_CSUM_TYPE_AUTH)
+			return i;
+	}
+	return -1;
 }
 
 struct btrfs_path *btrfs_alloc_path(void)

@@ -292,7 +292,7 @@ static bool btrfs_supported_super_csum(u16 csum_type)
 	case BTRFS_CSUM_TYPE_XXHASH:
 	case BTRFS_CSUM_TYPE_SHA256:
 	case BTRFS_CSUM_TYPE_BLAKE2:
-	case BTRFS_CSUM_TYPE_HMAC_SHA256:
+	case BTRFS_CSUM_TYPE_AUTH_SHA256:
 		return true;
 	default:
 		return false;
@@ -1565,7 +1565,6 @@ void btrfs_free_fs_info(struct btrfs_fs_info *fs_info)
 	percpu_counter_destroy(&fs_info->dev_replace.bio_counter);
 	btrfs_free_csum_hash(fs_info);
 	kfree(fs_info->auth_key_name);
-	kfree(fs_info->auth_hash_name);
 	btrfs_free_stripe_hash_table(fs_info);
 	btrfs_free_ref_cache(fs_info);
 	kfree(fs_info->balance_ctl);
@@ -2295,11 +2294,11 @@ static int btrfs_init_csum_hash(struct btrfs_fs_info *fs_info, u16 csum_type)
 	const char *csum_driver;
 	struct key *key;
 	const struct user_key_payload *ukp;
-	int err = -EINVAL;
+	int ret = -EINVAL;
 
-	csum_driver = btrfs_super_csum_driver(fs_info, csum_type);
+	csum_driver = btrfs_super_csum_driver(csum_type);
 	if (!csum_driver)
-		return err;
+		return -EINVAL;
 
 	csum_shash = crypto_alloc_shash(csum_driver, 0, 0);
 	if (IS_ERR(csum_shash)) {
@@ -2329,7 +2328,7 @@ static int btrfs_init_csum_hash(struct btrfs_fs_info *fs_info, u16 csum_type)
 
 	key = request_key(&key_type_logon, fs_info->auth_key_name, NULL);
 	if (IS_ERR(key)) {
-		err = PTR_ERR(key);
+		ret = PTR_ERR(key);
 		goto out_free_hash;
 	}
 
@@ -2339,28 +2338,27 @@ static int btrfs_init_csum_hash(struct btrfs_fs_info *fs_info, u16 csum_type)
 	if (!ukp) {
 		btrfs_err(fs_info, "error getting payload for key %s",
 			  fs_info->auth_key_name);
-		err = -EKEYREVOKED;
+		ret = -EKEYREVOKED;
 		goto out;
 	}
 
-	err = crypto_shash_setkey(fs_info->csum_shash, ukp->data, ukp->datalen);
-	if (err)
+	ret = crypto_shash_setkey(fs_info->csum_shash, ukp->data, ukp->datalen);
+	if (ret)
 		btrfs_err(fs_info, "error setting key %s for verification",
 			  fs_info->auth_key_name);
 
 out:
-	if (err) {
+	if (ret)
 		btrfs_free_csum_hash(fs_info);
-	}
 
 	up_read(&key->sem);
 	key_put(key);
 
-	return err;
+	return ret;
 
 out_free_hash:
 	btrfs_free_csum_hash(fs_info);
-	return err;
+	return ret;
 }
 
 static int btrfs_replay_log(struct btrfs_fs_info *fs_info,

@@ -1062,6 +1062,7 @@ static int btrfs_parse_early_options(struct btrfs_fs_info *info,
 	char *device_name, *opts, *orig, *p;
 	struct btrfs_device *device = NULL;
 	int error = 0;
+	int auth_name_valid = -1;
 
 	lockdep_assert_held(&uuid_mutex);
 
@@ -1079,6 +1080,7 @@ static int btrfs_parse_early_options(struct btrfs_fs_info *info,
 
 	while ((p = strsep(&opts, ",")) != NULL) {
 		int token;
+		char auth_name[16];
 
 		if (!*p)
 			continue;
@@ -1107,9 +1109,13 @@ static int btrfs_parse_early_options(struct btrfs_fs_info *info,
 			}
 			break;
 		case Opt_auth_hash_name:
-			info->auth_hash_name = match_strdup(&args[0]);
-			if (!info->auth_hash_name) {
-				error = -ENOMEM;
+			match_strlcpy(auth_name, &args[0], sizeof(auth_name));
+			auth_name_valid = btrfs_auth_csum_name_valid(auth_name);
+			if (auth_name_valid < 0) {
+				btrfs_err(info,
+					"invalid name of authentication hash %s",
+					auth_name);
+				error = -EINVAL;
 				goto out;
 			}
 			break;
@@ -1122,11 +1128,11 @@ static int btrfs_parse_early_options(struct btrfs_fs_info *info,
 	 * Check that both auth_key_name and auth_hash_name are either present
 	 * or absent and error out if only one of them is set.
 	 */
-	if (info->auth_key_name && info->auth_hash_name) {
+	if (info->auth_key_name && auth_name_valid >= 0) {
 		btrfs_info(info, "doing authentication");
 		btrfs_set_opt(info->mount_opt, AUTH_KEY);
-	} else if ((info->auth_key_name && !info->auth_hash_name) ||
-		   (!info->auth_key_name && info->auth_hash_name)) {
+	} else if ((info->auth_key_name && auth_name_valid < 0) ||
+		   (!info->auth_key_name && auth_name_valid < 0)) {
 		btrfs_err(info,
 			  "auth_key and auth_hash_name must be supplied together");
 		error = -EINVAL;
@@ -2735,5 +2741,5 @@ MODULE_LICENSE("GPL");
 MODULE_SOFTDEP("pre: crc32c");
 MODULE_SOFTDEP("pre: xxhash64");
 MODULE_SOFTDEP("pre: sha256");
-MODULE_SOFTDEP("pre: hmac");
 MODULE_SOFTDEP("pre: blake2b-256");
+MODULE_SOFTDEP("pre: hmac");

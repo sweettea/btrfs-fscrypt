@@ -961,7 +961,6 @@ struct btrfs_fs_info {
 
 	struct crypto_shash *csum_shash;
 	char *auth_key_name;
-	char *auth_hash_name;
 
 	/*
 	 * Number of send operations in progress.
@@ -2386,11 +2385,16 @@ BTRFS_SETGET_STACK_FUNCS(super_magic, struct btrfs_super_block, magic, 64);
 BTRFS_SETGET_STACK_FUNCS(super_uuid_tree_generation, struct btrfs_super_block,
 			 uuid_tree_generation, 64);
 
+enum {
+	BTRFS_CSUM_TYPE_PLAIN	= 0,
+	BTRFS_CSUM_TYPE_AUTH	= 1,
+};
+
 int btrfs_super_csum_size(const struct btrfs_super_block *s);
 const char *btrfs_super_csum_name(u16 csum_type);
-const char *btrfs_super_csum_driver(struct btrfs_fs_info *info, u16 csum_type);
+const char *btrfs_super_csum_driver(u16 csum_type);
 size_t __attribute_const__ btrfs_get_num_csums(void);
-
+int btrfs_auth_csum_name_valid(const char *name);
 
 /*
  * The leaf data grows from end-to-front in the node.

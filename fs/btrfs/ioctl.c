@@ -269,8 +269,10 @@ static int btrfs_ioctl_setflags(struct file *file, void __user *arg)
 		binode_flags &= ~BTRFS_INODE_DIRSYNC;
 	if (fsflags & FS_NOCOW_FL) {
 		if (btrfs_test_opt(fs_info, AUTH_KEY)) {
-			btrfs_err(fs_info,
-				  "Cannot set nodatacow or nodatasum on authenticated file-system");
+			/*
+			 * Cannot set nodatacow or nodatasum on authenticated
+			 * filesystem
+			 */
 			ret = -EPERM;
 			goto out_unlock;
 		} else if (S_ISREG(inode->i_mode)) {
