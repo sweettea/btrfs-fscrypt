@@ -233,6 +233,8 @@ enum btrfs_read_policy {
 	BTRFS_READ_POLICY_DEVICE,
 	/* Use the least loaded mirrors */
 	BTRFS_READ_POLICY_LOAD,
+	/* Round robin with priority based on class and queue length */
+	BTRFS_READ_POLICY_ROUNDROBIN,
 	BTRFS_NR_READ_POLICY,
 };
 
@@ -243,6 +245,9 @@ enum btrfs_read_policy {
  * them in favor of non-rotationnal disks.
  */
 #define BTRFS_DEFAULT_READ_POLICY_LOAD_ROTATING_INC 0
+
+/* Default duration in the roundrobin read policy (100 ms) */
+#define BTRFS_DEFAULT_READ_POLICY_ROUNDROBIN_DURATION 100
 
 struct btrfs_fs_devices {
 	u8 fsid[BTRFS_FSID_SIZE]; /* FS specific uuid */
@@ -296,6 +301,7 @@ struct btrfs_fs_devices {
 	struct kobject *devinfo_kobj;
 	struct kobject *read_policies_kobj;
 	struct kobject read_policy_load_kobj;
+	struct kobject read_policy_roundrobin_kobj;
 	struct completion kobj_unregister;
 
 	enum btrfs_chunk_allocation_policy chunk_alloc_policy;
@@ -306,6 +312,8 @@ struct btrfs_fs_devices {
 	/* Configuration specific for the load read policy */
 	u32 read_policy_load_duration;
 	u32 read_policy_load_rotating_inc;
+	/* Configuration specific for the roundrobin read policy */
+	u32 read_policy_roundrobin_duration;
 };
 
 #define BTRFS_BIO_INLINE_CSUM_SIZE	64

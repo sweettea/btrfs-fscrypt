@@ -367,6 +367,9 @@ static struct btrfs_fs_devices *alloc_fs_devices(const u8 *fsid,
 	else if (fsid)
 		memcpy(fs_devs->metadata_uuid, fsid, BTRFS_FSID_SIZE);
 
+	fs_devs->read_policy_roundrobin_duration =
+		BTRFS_DEFAULT_READ_POLICY_ROUNDROBIN_DURATION;
+
 	fs_devs->read_policy_load_duration =
 		BTRFS_DEFAULT_READ_POLICY_LOAD_DURATION;
 	fs_devs->read_policy_load_rotating_inc =
@@ -5608,6 +5611,169 @@ static int find_live_mirror_load(struct btrfs_fs_info *fs_info,
 	return preferred_mirror;
 }
 
+/*
+ * __find_live_mirror_roundrobin_nonrot() searches for a non-rotational raid1
+ * mirror which can process more requests.
+ *
+ * @fs_info:          the filesystem
+ * @map:              extent mapping which contains stripes
+ * @first:            number of the first mirror
+ * @limit:            number of the first mirror + number of mirrors
+ * @preferred_mirror: a pointer used to return the first result - the number of
+ *                    the preferred mirror; if no suitable mirror found, the
+ *                    value is -1
+ * @rotational_first: a pointer used to return the second result - the number of
+ *                    the first rotational device, on which the iteration
+ *                    stopped; if no rotational mirrors found, the value is -1
+ *
+ * If no suitable mirror is found, return -1, which means that no suitable
+ * mirror could be found. That value should be handled correctly by
+ * find_live_mirror_roundrobin().
+ */
+static void __find_live_mirror_roundrobin_nonrot(struct btrfs_fs_info *fs_info,
+						 struct map_lookup *map,
+						 int first, int limit,
+						 int *preferred_mirror,
+						 int *rotational_first)
+{
+	struct btrfs_device *device;
+	struct block_device *bdev;
+	unsigned int queue_depth;
+	int i;
+
+	/* Initial return values */
+	*preferred_mirror = -1;
+	*rotational_first = -1;
+
+	for (i = first; i < limit; i++) {
+		device = map->stripes[i].dev;
+		bdev = device->bdev;
+
+		/* If the device is rotational, stop the search. */
+		if (!blk_queue_nonrot(bdev->bd_disk->queue)) {
+			*rotational_first = i;
+			return;
+		}
+
+		queue_depth = blk_queue_depth(bdev->bd_disk->queue);
+
+		/*
+		 * If the mirror with suitable criteria found, return it and
+		 * stop the search.
+		 */
+		if (percpu_counter_compare(&device->inflight, queue_depth) == -1) {
+			*preferred_mirror = i;
+			return;
+		}
+	}
+}
+
+/*
+ * __find_live_mirror_roundrobin_rot() searches for a rotational raid1 mirror
+ * which can process more requests.
+ *
+ * @fs_info:          the filesystem
+ * @map:              extent mapping which contains stripes
+ * @first:            number of the first rotational mirror
+ * @limit:            number of the first mirror (in the whole array) + number
+ +                    of mirrors
+ * @preferred_mirror: a pointer used to return the first result - the number of
+ *                    the preferred mirror; if no suitable mirror found, the
+ *                    value is -1
+ *
+ * Return: the number of the first rotational device on which the iteration
+ *         stopped; if no rotational mirrors found, return -1
+ */
+static int __find_live_mirror_roundrobin_rot(struct btrfs_fs_info *fs_info,
+					     struct map_lookup *map,
+					     int first, int limit)
+{
+	struct btrfs_device *device;
+	struct block_device *bdev;
+	unsigned int queue_depth;
+	int i;
+
+	for (i = first; i < limit; i++) {
+		device = map->stripes[i].dev;
+		bdev = device->bdev;
+
+		queue_depth = blk_queue_depth(bdev->bd_disk->queue);
+
+		/*
+		 * If the mirror with suitable criteria found, return it and
+		 * stop the search.
+		 */
+		if (percpu_counter_compare(&device->inflight, queue_depth) == -1)
+			return i;
+	}
+
+	return -1;
+}
+
+/*
+ * find_live_mirror_roundrobin() searches for a raid1 mirror which can process
+ * more requests.
+ *
+ * @fs_info:     the filesystem
+ * @map:         extent mapping which contains stripes
+ * @first:       number of the first mirror
+ * @num_stripes: number of stripes in the array
+ *
+ * It calls __find_live_mirror_roundrobin() function to try to find a suitable
+ * mirror, firstly non-rotational, then rotational.
+ *
+ * If no suitable mirror found, it selects the next (last used + 1) mirror.
+ */
+static int find_live_mirror_roundrobin(struct btrfs_fs_info *fs_info,
+				       struct map_lookup *map, int first,
+				       int num_stripes)
+{
+	int preferred_mirror;
+	int rotational_first;
+	u64 last_sched_time;
+	u64 duration;
+	int limit;
+	u64 now;
+
+	last_sched_time = this_cpu_read(*fs_info->last_sched_time);
+	if (last_sched_time != 0) {
+		now = ktime_get_ns();
+		duration = now - last_sched_time;
+
+		if (duration < (NSEC_PER_MSEC *
+				fs_info->fs_devices->read_policy_roundrobin_duration)) {
+			preferred_mirror = this_cpu_read(*fs_info->last_mirror);
+			goto out;
+		}
+	}
+
+	limit = first + num_stripes;
+
+	/* Try to find non-rotational mirror */
+	__find_live_mirror_roundrobin_nonrot(fs_info, map, first, limit,
+					     &preferred_mirror,
+					     &rotational_first);
+	if (preferred_mirror >= 0)
+		goto out;
+
+	/* Try to find rotational mirror if any available */
+	if (rotational_first >= 0) {
+		preferred_mirror = __find_live_mirror_roundrobin_rot(
+			fs_info, map, first, num_stripes);
+		if (preferred_mirror >= 0)
+			goto out;
+	}
+
+	/* If no suitable mirror found, return the next mirror */
+	preferred_mirror = (
+		this_cpu_read(*fs_info->last_mirror) + 1) % num_stripes;
+
+out:
+	this_cpu_write(*fs_info->last_sched_time, now);
+	this_cpu_write(*fs_info->last_mirror, preferred_mirror);
+	return preferred_mirror;
+}
+
 static int find_live_mirror(struct btrfs_fs_info *fs_info,
 			    struct map_lookup *map, int first,
 			    int dev_replace_is_ongoing)
@@ -5630,12 +5796,16 @@ static int find_live_mirror(struct btrfs_fs_info *fs_info,
 	default:
 		/* Shouldn't happen, just warn and use pid instead of failing */
 		btrfs_warn_rl(fs_info,
-			      "unknown read_policy type %u, reset to pid",
+			      "unknown read_policy type %u, reset to roundrobin",
 			      fs_info->fs_devices->read_policy);
-		fs_info->fs_devices->read_policy = BTRFS_READ_POLICY_PID;
+		fs_info->fs_devices->read_policy = BTRFS_READ_POLICY_ROUNDROBIN;
 		fallthrough;
 	case BTRFS_READ_POLICY_PID:
 		preferred_mirror = first + (current->pid % num_stripes);
+		break;
+	case BTRFS_READ_POLICY_ROUNDROBIN:
+		preferred_mirror = find_live_mirror_roundrobin(
+			fs_info, map, first, num_stripes);
 		break;
 	case BTRFS_READ_POLICY_LOAD:
 		preferred_mirror = find_live_mirror_load(fs_info, map, first,

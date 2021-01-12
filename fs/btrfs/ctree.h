@@ -976,7 +976,7 @@ struct btrfs_fs_info {
 	/* Max size to emit ZONE_APPEND write command */
 	u64 max_zone_append_size;
 
-	/* Data for scheduling made by the "load" read policy */
+	/* Data for scheduling made by the "load" and "roundrobin" read policies */
 	u64 __percpu *last_sched_time;
 	int __percpu *last_mirror;
 
