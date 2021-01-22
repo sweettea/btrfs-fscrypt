@@ -896,6 +896,97 @@ static ssize_t btrfs_generation_show(struct kobject *kobj,
 }
 BTRFS_ATTR(, generation, btrfs_generation_show);
 
+static ssize_t btrfs_read_policy_load_duration_show(struct kobject *kobj,
+						    struct kobj_attribute *a,
+						    char *buf)
+{
+	struct btrfs_fs_devices *fs_devs = to_fs_devs(kobj->parent->parent);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", fs_devs->read_policy_load_duration);
+}
+
+static ssize_t btrfs_read_policy_load_duration_store(struct kobject *kobj,
+						     struct kobj_attribute *a,
+						     const char *buf, size_t len)
+{
+	struct btrfs_fs_devices *fs_devs = to_fs_devs(kobj->parent->parent);
+	u32 duration;
+	int ret;
+
+	ret = kstrtou32(buf, 10, &duration);
+	if (ret)
+		return -EINVAL;
+
+	WRITE_ONCE(fs_devs->read_policy_load_duration, duration);
+	return len;
+}
+BTRFS_ATTR_RW(read_policy_load, duration, btrfs_read_policy_load_duration_show,
+	      btrfs_read_policy_load_duration_store);
+
+static ssize_t btrfs_read_policy_load_rotating_inc_show(struct kobject *kobj,
+							struct kobj_attribute *a,
+							char *buf)
+{
+	struct btrfs_fs_devices *fs_devs = to_fs_devs(kobj->parent->parent);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n",
+			 fs_devs->read_policy_load_rotating_inc);
+}
+
+static ssize_t btrfs_read_policy_load_rotating_inc_store(struct kobject *kobj,
+							 struct kobj_attribute *a,
+							 const char *buf,
+							 size_t len)
+{
+	struct btrfs_fs_devices *fs_devs = to_fs_devs(kobj->parent->parent);
+	u32 rotating_inc;
+	int ret;
+
+	ret = kstrtou32(buf, 10, &rotating_inc);
+	if (ret)
+		return -EINVAL;
+
+	WRITE_ONCE(fs_devs->read_policy_load_rotating_inc, rotating_inc);
+	return len;
+}
+BTRFS_ATTR_RW(read_policy_load, rotating_inc,
+	      btrfs_read_policy_load_rotating_inc_show,
+	      btrfs_read_policy_load_rotating_inc_store);
+
+static struct attribute *read_policy_load_attrs[] = {
+	BTRFS_ATTR_PTR(read_policy_load, duration),
+	BTRFS_ATTR_PTR(read_policy_load, rotating_inc),
+	NULL
+};
+ATTRIBUTE_GROUPS(read_policy_load);
+
+static void btrfs_release_read_policy_load_kobj(struct kobject *kobj)
+{
+	struct btrfs_fs_devices *fs_devs = to_fs_devs(kobj->parent);
+
+	memset(&fs_devs->read_policy_load_kobj, 0, sizeof(struct kobject));
+}
+
+static struct kobj_type read_policy_load_ktype = {
+	.sysfs_ops      = &kobj_sysfs_ops,
+	.default_groups = read_policy_load_groups,
+	.release        = btrfs_release_read_policy_load_kobj,
+};
+
+static int btrfs_sysfs_add_read_policy_load(struct btrfs_fs_devices *devices)
+{
+	int ret;
+
+	ret = kobject_init_and_add(&devices->read_policy_load_kobj,
+				   &read_policy_load_ktype,
+				   devices->read_policies_kobj,
+				   "%s", "load");
+	if (ret < 0)
+		kobject_put(&devices->read_policy_load_kobj);
+
+	return ret;
+}
+
 /*
  * Look for an exact string @string in @buffer with possible leading or
  * trailing whitespace
@@ -917,7 +1008,7 @@ static bool strmatch(const char *buffer, const char *string)
 
 /* Must follow the order as in enum btrfs_read_policy */
 static const char * const btrfs_read_policy_name[] = { "pid", "latency",
-						       "device" };
+	"device", "load" };
 
 static ssize_t btrfs_read_policy_show(struct kobject *kobj,
 				      struct kobj_attribute *a, char *buf)
@@ -1060,6 +1151,12 @@ static int addrm_unknown_feature_attrs(struct btrfs_fs_info *fs_info, bool add)
 
 static void __btrfs_sysfs_remove_fsid(struct btrfs_fs_devices *fs_devs)
 {
+	if (fs_devs->read_policies_kobj) {
+		kobject_del(fs_devs->read_policies_kobj);
+		kobject_put(fs_devs->read_policies_kobj);
+		fs_devs->read_policies_kobj = NULL;
+	}
+
 	if (fs_devs->devinfo_kobj) {
 		kobject_del(fs_devs->devinfo_kobj);
 		kobject_put(fs_devs->devinfo_kobj);
@@ -1644,6 +1741,19 @@ int btrfs_sysfs_add_fsid(struct btrfs_fs_devices *fs_devs)
 		btrfs_sysfs_remove_fsid(fs_devs);
 		return -ENOMEM;
 	}
+
+	fs_devs->read_policies_kobj = kobject_create_and_add(
+		"read_policies", &fs_devs->fsid_kobj);
+	if (!fs_devs->read_policies_kobj) {
+		btrfs_err(fs_devs->fs_info,
+			  "failed to init sysfs read_polivies kobject");
+		btrfs_sysfs_remove_fsid(fs_devs);
+		return -ENOMEM;
+	}
+
+	error = btrfs_sysfs_add_read_policy_load(fs_devs);
+	if (error)
+		return error;
 
 	return 0;
 }

@@ -367,6 +367,11 @@ static struct btrfs_fs_devices *alloc_fs_devices(const u8 *fsid,
 	else if (fsid)
 		memcpy(fs_devs->metadata_uuid, fsid, BTRFS_FSID_SIZE);
 
+	fs_devs->read_policy_load_duration =
+		BTRFS_DEFAULT_READ_POLICY_LOAD_DURATION;
+	fs_devs->read_policy_load_rotating_inc =
+		BTRFS_DEFAULT_READ_POLICY_LOAD_ROTATING_INC;
+
 	return fs_devs;
 }
 
@@ -5550,6 +5555,59 @@ static int btrfs_find_read_preferred(struct map_lookup *map, int first, int num_
 	return first;
 }
 
+static int mirror_load(struct btrfs_fs_info *fs_info,
+		       struct btrfs_bio_stripe *stripe)
+{
+	struct btrfs_device *dev;
+	int load;
+
+	dev = stripe->dev;
+	load = percpu_counter_sum(&dev->inflight);
+
+	if (blk_queue_nonrot(dev->bdev->bd_disk->queue))
+		return load;
+
+	return load + fs_info->fs_devices->read_policy_load_rotating_inc;
+}
+
+static int find_live_mirror_load(struct btrfs_fs_info *fs_info,
+				 struct map_lookup *map, int first,
+				 int num_stripes)
+{
+	int preferred_mirror;
+	u64 last_sched_time;
+	int min_load;
+	int cur_load;
+	u64 duration;
+	u64 now;
+	int i;
+
+	last_sched_time = this_cpu_read(*fs_info->last_sched_time);
+	if (last_sched_time != 0) {
+		now = ktime_get_ns();
+		duration = now - last_sched_time;
+
+		if (duration < (NSEC_PER_MSEC *
+				fs_info->fs_devices->read_policy_load_duration))
+			return this_cpu_read(*fs_info->last_mirror);
+	}
+
+	preferred_mirror = first;
+	min_load = INT_MAX;
+
+	for (i = first; i < first + num_stripes; i++) {
+		cur_load = mirror_load(fs_info, &map->stripes[i]);
+		if (cur_load < min_load) {
+			preferred_mirror = i;
+			min_load = cur_load;
+		}
+	}
+
+	this_cpu_write(*fs_info->last_sched_time, now);
+	this_cpu_write(*fs_info->last_mirror, preferred_mirror);
+	return preferred_mirror;
+}
+
 static int find_live_mirror(struct btrfs_fs_info *fs_info,
 			    struct map_lookup *map, int first,
 			    int dev_replace_is_ongoing)
@@ -5578,6 +5636,10 @@ static int find_live_mirror(struct btrfs_fs_info *fs_info,
 		fallthrough;
 	case BTRFS_READ_POLICY_PID:
 		preferred_mirror = first + (current->pid % num_stripes);
+		break;
+	case BTRFS_READ_POLICY_LOAD:
+		preferred_mirror = find_live_mirror_load(fs_info, map, first,
+							 num_stripes);
 		break;
 	case BTRFS_READ_POLICY_LATENCY:
 		preferred_mirror = btrfs_find_best_stripe(fs_info, map, first,

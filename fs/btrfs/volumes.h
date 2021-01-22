@@ -231,8 +231,18 @@ enum btrfs_read_policy {
 	BTRFS_READ_POLICY_LATENCY,
 	/* Use the device marked with READ_PREFERRED state */
 	BTRFS_READ_POLICY_DEVICE,
+	/* Use the least loaded mirrors */
+	BTRFS_READ_POLICY_LOAD,
 	BTRFS_NR_READ_POLICY,
 };
+
+/* Default duration in the load read policy (100 ms) */
+#define BTRFS_DEFAULT_READ_POLICY_LOAD_DURATION 100
+/*
+ * Default value by which the load of rotational disks is increased, to bias
+ * them in favor of non-rotationnal disks.
+ */
+#define BTRFS_DEFAULT_READ_POLICY_LOAD_ROTATING_INC 0
 
 struct btrfs_fs_devices {
 	u8 fsid[BTRFS_FSID_SIZE]; /* FS specific uuid */
@@ -284,12 +294,18 @@ struct btrfs_fs_devices {
 	struct kobject fsid_kobj;
 	struct kobject *devices_kobj;
 	struct kobject *devinfo_kobj;
+	struct kobject *read_policies_kobj;
+	struct kobject read_policy_load_kobj;
 	struct completion kobj_unregister;
 
 	enum btrfs_chunk_allocation_policy chunk_alloc_policy;
 
 	/* Policy used to read the mirrored stripes */
 	enum btrfs_read_policy read_policy;
+
+	/* Configuration specific for the load read policy */
+	u32 read_policy_load_duration;
+	u32 read_policy_load_rotating_inc;
 };
 
 #define BTRFS_BIO_INLINE_CSUM_SIZE	64
