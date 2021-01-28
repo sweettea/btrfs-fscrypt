@@ -15,6 +15,7 @@
 #include <linux/uuid.h>
 #include <linux/list_sort.h>
 #include <linux/part_stat.h>
+#include <linux/prandom.h>
 #include "misc.h"
 #include "ctree.h"
 #include "extent_map.h"
@@ -5817,6 +5818,9 @@ static int find_live_mirror(struct btrfs_fs_info *fs_info,
 		break;
 	case BTRFS_READ_POLICY_DEVICE:
 		preferred_mirror = btrfs_find_read_preferred(map, first, num_stripes);
+		break;
+	case BTRFS_READ_POLICY_RANDOM:
+		preferred_mirror = (first + prandom_u32_max(num_stripes)) % num_stripes;
 		break;
 	}
 

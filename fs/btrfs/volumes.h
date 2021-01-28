@@ -235,6 +235,8 @@ enum btrfs_read_policy {
 	BTRFS_READ_POLICY_LOAD,
 	/* Round robin with priority based on class and queue length */
 	BTRFS_READ_POLICY_ROUNDROBIN,
+	/* Select mirror randomly */
+	BTRFS_READ_POLICY_RANDOM,
 	BTRFS_NR_READ_POLICY,
 };
 
