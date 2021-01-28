@@ -1068,7 +1068,7 @@ static bool strmatch(const char *buffer, const char *string)
 
 /* Must follow the order as in enum btrfs_read_policy */
 static const char * const btrfs_read_policy_name[] = { "pid", "latency",
-	"device", "load", "roundrobin", "random" };
+	"device", "load", "roundrobin", "random", "burst" };
 
 static ssize_t btrfs_read_policy_show(struct kobject *kobj,
 				      struct kobj_attribute *a, char *buf)

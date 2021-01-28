@@ -147,6 +147,9 @@ struct btrfs_device {
 
 	/* I/O stats for raid1 mirror selection */
 	struct percpu_counter inflight;
+
+	/* Burst stats for policy burst */
+	u32 read_burst;
 };
 
 /*
@@ -237,6 +240,8 @@ enum btrfs_read_policy {
 	BTRFS_READ_POLICY_ROUNDROBIN,
 	/* Select mirror randomly */
 	BTRFS_READ_POLICY_RANDOM,
+	/* Round robin with configurable burst to a device before switching */
+	BTRFS_READ_POLICY_RR_BURST,
 	BTRFS_NR_READ_POLICY,
 };
 
@@ -250,6 +255,9 @@ enum btrfs_read_policy {
 
 /* Default duration in the roundrobin read policy (100 ms) */
 #define BTRFS_DEFAULT_READ_POLICY_ROUNDROBIN_DURATION 100
+
+/* Default burst count before anoter mirror is selected */
+#define BTRFS_DEFAULT_READ_POLICY_RR_BURST	50
 
 struct btrfs_fs_devices {
 	u8 fsid[BTRFS_FSID_SIZE]; /* FS specific uuid */
@@ -316,6 +324,8 @@ struct btrfs_fs_devices {
 	u32 read_policy_load_rotating_inc;
 	/* Configuration specific for the roundrobin read policy */
 	u32 read_policy_roundrobin_duration;
+	/* Configurable burst count for read policy burst */
+	u32 read_policy_burst;
 };
 
 #define BTRFS_BIO_INLINE_CSUM_SIZE	64

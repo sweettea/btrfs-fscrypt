@@ -376,6 +376,8 @@ static struct btrfs_fs_devices *alloc_fs_devices(const u8 *fsid,
 	fs_devs->read_policy_load_rotating_inc =
 		BTRFS_DEFAULT_READ_POLICY_LOAD_ROTATING_INC;
 
+	fs_devs->read_policy_burst = BTRFS_DEFAULT_READ_POLICY_RR_BURST;
+
 	return fs_devs;
 }
 
@@ -5775,6 +5777,31 @@ out:
 	return preferred_mirror;
 }
 
+static int policy_burst(struct btrfs_fs_info *fs_info, struct map_lookup *map,
+			int first, int num_stripes)
+{
+	int index;
+	const u32 burst = READ_ONCE(fs_info->fs_devices->read_policy_burst);
+
+	for (index = first; index < first + num_stripes; index++) {
+		struct btrfs_device *device = map->stripes[index].dev;
+
+		if (device->read_burst < burst) {
+			device->read_burst++;
+			return index;
+		}
+	}
+
+	/* No suitable device found, reset state */
+	for (index = first; index < first + num_stripes; index++) {
+		struct btrfs_device *device = map->stripes[index].dev;
+
+		device->read_burst = 0;
+	}
+
+	return first;
+}
+
 static int find_live_mirror(struct btrfs_fs_info *fs_info,
 			    struct map_lookup *map, int first,
 			    int dev_replace_is_ongoing)
@@ -5821,6 +5848,9 @@ static int find_live_mirror(struct btrfs_fs_info *fs_info,
 		break;
 	case BTRFS_READ_POLICY_RANDOM:
 		preferred_mirror = (first + prandom_u32_max(num_stripes)) % num_stripes;
+		break;
+	case BTRFS_READ_POLICY_RR_BURST:
+		preferred_mirror = policy_burst(fs_info, map, first, num_stripes);
 		break;
 	}
 
