@@ -1881,19 +1881,6 @@ static void wait_current_trans_commit_start(struct btrfs_fs_info *fs_info,
 }
 
 /*
- * wait for the current transaction to start and then become unblocked.
- * caller holds ref.
- */
-static void wait_current_trans_commit_start_and_unblock(
-					struct btrfs_fs_info *fs_info,
-					struct btrfs_transaction *trans)
-{
-	wait_event(fs_info->transaction_wait,
-		   trans->state >= TRANS_STATE_UNBLOCKED ||
-		   TRANS_ABORTED(trans));
-}
-
-/*
  * commit transactions asynchronously. once btrfs_commit_transaction_async
  * returns, any subsequent transaction will not be allowed to join.
  */
