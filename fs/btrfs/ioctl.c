@@ -3549,11 +3549,9 @@ static noinline long btrfs_ioctl_start_sync(struct btrfs_root *root,
 		goto out;
 	}
 	transid = trans->transid;
-	ret = btrfs_commit_transaction_async(trans);
-	if (ret) {
-		btrfs_end_transaction(trans);
-		return ret;
-	}
+	/* Trigger commit via the pending action */
+	btrfs_set_pending(fs_info, COMMIT);
+	wake_up_process(fs_info->transaction_kthread);
 out:
 	if (argp)
 		if (copy_to_user(argp, &transid, sizeof(transid)))
