@@ -272,8 +272,7 @@ int btrfs_fileattr_set(struct user_namespace *mnt_userns,
 		if (btrfs_test_opt(fs_info, AUTH_KEY)) {
 			btrfs_err(fs_info,
 				  "Cannot set nodatacow or nodatasum on authenticated file-system");
-			ret = -EPERM;
-			goto out_unlock;
+			return -EPERM;
 		} else if (S_ISREG(inode->i_mode)) {
 			/*
 			 * It's safe to turn csums off here, no extents exist.

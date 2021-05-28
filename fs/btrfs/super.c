@@ -1068,7 +1068,8 @@ out:
  * All other options will be parsed on much later in the mount process and
  * only when we need to allocate a new super block.
  */
-static int btrfs_parse_device_options(const char *options, fmode_t flags,
+static int btrfs_parse_device_options(struct btrfs_fs_info *fs_info,
+				      const char *options, fmode_t flags,
 				      void *holder)
 {
 	substring_t args[MAX_OPT_ARGS];
@@ -1113,15 +1114,15 @@ static int btrfs_parse_device_options(const char *options, fmode_t flags,
 			}
 			break;
 		case Opt_auth_key:
-			info->auth_key_name = match_strdup(&args[0]);
-			if (!info->auth_key_name) {
+			fs_info->auth_key_name = match_strdup(&args[0]);
+			if (!fs_info->auth_key_name) {
 				error = -ENOMEM;
 				goto out;
 			}
 			break;
 		case Opt_auth_hash_name:
-			info->auth_hash_name = match_strdup(&args[0]);
-			if (!info->auth_hash_name) {
+			fs_info->auth_hash_name = match_strdup(&args[0]);
+			if (!fs_info->auth_hash_name) {
 				error = -ENOMEM;
 				goto out;
 			}
@@ -1135,12 +1136,12 @@ static int btrfs_parse_device_options(const char *options, fmode_t flags,
 	 * Check that both auth_key_name and auth_hash_name are either present
 	 * or absent and error out if only one of them is set.
 	 */
-	if (info->auth_key_name && info->auth_hash_name) {
-		btrfs_info(info, "doing authentication");
-		btrfs_set_opt(info->mount_opt, AUTH_KEY);
-	} else if ((info->auth_key_name && !info->auth_hash_name) ||
-		   (!info->auth_key_name && info->auth_hash_name)) {
-		btrfs_err(info,
+	if (fs_info->auth_key_name && fs_info->auth_hash_name) {
+		btrfs_info(fs_info, "doing authentication");
+		btrfs_set_opt(fs_info->mount_opt, AUTH_KEY);
+	} else if ((fs_info->auth_key_name && !fs_info->auth_hash_name) ||
+		   (!fs_info->auth_key_name && fs_info->auth_hash_name)) {
+		btrfs_err(fs_info,
 			  "auth_key and auth_hash_name must be supplied together");
 		error = -EINVAL;
 	}
@@ -1739,7 +1740,7 @@ static struct dentry *btrfs_mount_root(struct file_system_type *fs_type,
 	}
 
 	mutex_lock(&uuid_mutex);
-	error = btrfs_parse_device_options(data, mode, fs_type);
+	error = btrfs_parse_device_options(fs_info, data, mode, fs_type);
 	if (error) {
 		mutex_unlock(&uuid_mutex);
 		goto error_fs_info;
