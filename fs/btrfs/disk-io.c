@@ -2411,7 +2411,7 @@ static int btrfs_init_csum_hash(struct btrfs_fs_info *fs_info, u16 csum_type)
 	if (!btrfs_test_opt(fs_info, AUTH_KEY))
 		return 0;
 
-	key = request_key(&key_type_logon, fs_info->auth_key_name, NULL);
+	key = request_key(&key_type_user, fs_info->auth_key_name, NULL);
 	if (IS_ERR(key)) {
 		ret = PTR_ERR(key);
 		goto out_free_hash;
