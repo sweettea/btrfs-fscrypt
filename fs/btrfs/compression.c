@@ -154,6 +154,7 @@ static int check_compressed_csum(struct btrfs_inode *inode, struct bio *bio,
 	u8 csum[BTRFS_CSUM_SIZE];
 	struct compressed_bio *cb = bio->bi_private;
 	u8 *cb_sum = cb->sums;
+	const bool auth_hash = (fs_info->auth_key_name != NULL);
 
 	if (!fs_info->csum_root || (inode->flags & BTRFS_INODE_NODATASUM))
 		return 0;
@@ -172,10 +173,20 @@ static int check_compressed_csum(struct btrfs_inode *inode, struct bio *bio,
 		/* Hash through the page sector by sector */
 		for (pg_offset = 0; pg_offset < bytes_left;
 		     pg_offset += sectorsize) {
+			/*
+			 * Checksum raw blocks, with FSID prefix in case it's
+			 * auth hash
+			 */
+			crypto_shash_init(shash);
+			if (auth_hash) {
+				crypto_shash_update(shash, fs_info->super_copy->fsid,
+						    BTRFS_FSID_SIZE);
+			}
 			kaddr = kmap_atomic(page);
-			crypto_shash_digest(shash, kaddr + pg_offset,
-					    sectorsize, csum);
+			crypto_shash_update(shash, kaddr + pg_offset,
+					    sectorsize);
 			kunmap_atomic(kaddr);
+			crypto_shash_final(shash, csum);
 
 			if (memcmp(&csum, cb_sum, csum_size) != 0) {
 				btrfs_print_data_csum_error(inode, disk_start,

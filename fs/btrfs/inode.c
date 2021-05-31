@@ -3094,6 +3094,7 @@ static int check_data_csum(struct inode *inode, struct btrfs_io_bio *io_bio,
 	unsigned int offset_sectors;
 	u8 *csum_expected;
 	u8 csum[BTRFS_CSUM_SIZE];
+	const bool auth_hash = (fs_info->auth_key_name != NULL);
 
 	ASSERT(pgoff + len <= PAGE_SIZE);
 
@@ -3103,7 +3104,11 @@ static int check_data_csum(struct inode *inode, struct btrfs_io_bio *io_bio,
 	kaddr = kmap_atomic(page);
 	shash->tfm = fs_info->csum_shash;
 
-	crypto_shash_digest(shash, kaddr + pgoff, len, csum);
+	crypto_shash_init(shash);
+	if (auth_hash)
+		crypto_shash_update(shash, fs_info->super_copy->fsid, BTRFS_FSID_SIZE);
+	crypto_shash_update(shash, kaddr + pgoff, len);
+	crypto_shash_final(shash, csum);
 
 	if (memcmp(csum, csum_expected, csum_size))
 		goto zeroit;

@@ -638,6 +638,7 @@ blk_status_t btrfs_csum_one_bio(struct btrfs_inode *inode, struct bio *bio,
 	int i;
 	u64 offset;
 	unsigned nofs_flag;
+	const bool auth_hash = (fs_info->auth_key_name != NULL);
 
 	nofs_flag = memalloc_nofs_save();
 	sums = kvzalloc(btrfs_ordered_sum_size(fs_info, bio->bi_iter.bi_size),
@@ -699,12 +700,21 @@ blk_status_t btrfs_csum_one_bio(struct btrfs_inode *inode, struct bio *bio,
 				index = 0;
 			}
 
+			/*
+			 * Checksum data block, mix in the FSID in case it's
+			 * authenticated hash
+			 */
+			crypto_shash_init(shash);
+			if (auth_hash) {
+				crypto_shash_update(shash, fs_info->super_copy->fsid,
+						    BTRFS_FSID_SIZE);
+			}
 			data = kmap_atomic(bvec.bv_page);
-			crypto_shash_digest(shash, data + bvec.bv_offset
+			crypto_shash_update(shash, data + bvec.bv_offset
 					    + (i * fs_info->sectorsize),
-					    fs_info->sectorsize,
-					    sums->sums + index);
+					    fs_info->sectorsize);
 			kunmap_atomic(data);
+			crypto_shash_final(shash, sums->sums + index);
 			index += fs_info->csum_size;
 			offset += fs_info->sectorsize;
 			this_sum_bytes += fs_info->sectorsize;

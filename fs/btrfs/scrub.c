@@ -1819,6 +1819,7 @@ static int scrub_checksum_data(struct scrub_block *sblock)
 	u8 csum[BTRFS_CSUM_SIZE];
 	struct scrub_page *spage;
 	char *kaddr;
+	const bool auth_hash = (fs_info->auth_key_name != NULL);
 
 	BUG_ON(sblock->page_count < 1);
 	spage = sblock->pagev[0];
@@ -1834,7 +1835,10 @@ static int scrub_checksum_data(struct scrub_block *sblock)
 	 * In scrub_pages() and scrub_pages_for_parity() we ensure each spage
 	 * only contains one sector of data.
 	 */
-	crypto_shash_digest(shash, kaddr, fs_info->sectorsize, csum);
+	if (auth_hash)
+		crypto_shash_update(shash, fs_info->super_copy->fsid, BTRFS_FSID_SIZE);
+	crypto_shash_update(shash, kaddr, fs_info->sectorsize);
+	crypto_shash_final(shash, csum);
 
 	if (memcmp(csum, spage->csum, fs_info->csum_size))
 		sblock->checksum_error = 1;
