@@ -2411,12 +2411,6 @@ static int btrfs_init_csum_hash(struct btrfs_fs_info *fs_info, u16 csum_type)
 	if (!btrfs_test_opt(fs_info, AUTH_KEY))
 		return 0;
 
-	if (strncmp(fs_info->auth_key_name, "btrfs:", 6)) {
-		btrfs_err(fs_info,
-			  "authentication key must start with 'btrfs:'");
-		goto out_free_hash;
-	}
-
 	key = request_key(&key_type_logon, fs_info->auth_key_name, NULL);
 	if (IS_ERR(key)) {
 		ret = PTR_ERR(key);
