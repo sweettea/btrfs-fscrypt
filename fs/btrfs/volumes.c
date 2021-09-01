@@ -52,6 +52,32 @@ const struct btrfs_raid_attr btrfs_raid_array[BTRFS_NR_RAID_TYPES] = {
 		.bg_flag	= BTRFS_BLOCK_GROUP_RAID10,
 		.mindev_error	= BTRFS_ERROR_DEV_RAID10_MIN_NOT_MET,
 	},
+	[BTRFS_RAID_RAID10C3] = {
+		.sub_stripes	= 3,
+		.dev_stripes	= 1,
+		.devs_max	= 0,	/* 0 == as many as possible */
+		.devs_min	= 3,	/* Degenerate mode allowed */
+		.tolerated_failures = 2,
+		.devs_increment	= 3,
+		.ncopies	= 3,
+		.nparity        = 0,
+		.raid_name	= "raid10c3",
+		.bg_flag	= BTRFS_BLOCK_GROUP_RAID10C3,
+		.mindev_error	= BTRFS_ERROR_DEV_RAID10C3_MIN_NOT_MET,
+	},
+	[BTRFS_RAID_RAID10C4] = {
+		.sub_stripes	= 4,
+		.dev_stripes	= 1,
+		.devs_max	= 0,	/* 0 == as many as possible */
+		.devs_min	= 4,	/* Degenerate mode allowed */
+		.tolerated_failures = 3,
+		.devs_increment	= 4,
+		.ncopies	= 4,
+		.nparity        = 0,
+		.raid_name	= "raid10c4",
+		.bg_flag	= BTRFS_BLOCK_GROUP_RAID10C4,
+		.mindev_error	= BTRFS_ERROR_DEV_RAID10C4_MIN_NOT_MET,
+	},
 	[BTRFS_RAID_RAID1] = {
 		.sub_stripes	= 1,
 		.dev_stripes	= 1,
@@ -166,6 +192,10 @@ enum btrfs_raid_types __attribute_const__ btrfs_bg_flags_to_raid_index(u64 flags
 {
 	if (flags & BTRFS_BLOCK_GROUP_RAID10)
 		return BTRFS_RAID_RAID10;
+	else if (flags & BTRFS_BLOCK_GROUP_RAID10C3)
+		return BTRFS_RAID_RAID10C3;
+	else if (flags & BTRFS_BLOCK_GROUP_RAID10C4)
+		return BTRFS_RAID_RAID10C4;
 	else if (flags & BTRFS_BLOCK_GROUP_RAID1)
 		return BTRFS_RAID_RAID1;
 	else if (flags & BTRFS_BLOCK_GROUP_RAID1C3)
@@ -5057,6 +5087,14 @@ static void check_raid1c34_incompat_flag(struct btrfs_fs_info *info, u64 type)
 	btrfs_set_fs_incompat(info, RAID1C34);
 }
 
+static void check_raid10c34_incompat_flag(struct btrfs_fs_info *info, u64 type)
+{
+	if (!(type & (BTRFS_BLOCK_GROUP_RAID10C3 | BTRFS_BLOCK_GROUP_RAID10C4)))
+		return;
+
+	btrfs_set_fs_incompat(info, RAID10C34);
+}
+
 /*
  * Structure used internally for btrfs_create_chunk() function.
  * Wraps needed parameters.
@@ -5446,6 +5484,7 @@ static struct btrfs_block_group *create_chunk(struct btrfs_trans_handle *trans,
 	free_extent_map(em);
 	check_raid56_incompat_flag(info, type);
 	check_raid1c34_incompat_flag(info, type);
+	check_raid10c34_incompat_flag(info, type);
 
 	return block_group;
 
@@ -5756,7 +5795,7 @@ int btrfs_num_copies(struct btrfs_fs_info *fs_info, u64 logical, u64 len)
 	map = em->map_lookup;
 	if (map->type & (BTRFS_BLOCK_GROUP_DUP | BTRFS_BLOCK_GROUP_RAID1_MASK))
 		ret = map->num_stripes;
-	else if (map->type & BTRFS_BLOCK_GROUP_RAID10)
+	else if (map->type & BTRFS_BLOCK_GROUP_RAID10_MASK)
 		ret = map->sub_stripes;
 	else if (map->type & BTRFS_BLOCK_GROUP_RAID5)
 		ret = 2;
@@ -5828,9 +5867,9 @@ static int find_live_mirror(struct btrfs_fs_info *fs_info,
 	struct btrfs_device *srcdev;
 
 	ASSERT((map->type &
-		 (BTRFS_BLOCK_GROUP_RAID1_MASK | BTRFS_BLOCK_GROUP_RAID10)));
+		 (BTRFS_BLOCK_GROUP_RAID1_MASK | BTRFS_BLOCK_GROUP_RAID10_MASK)));
 
-	if (map->type & BTRFS_BLOCK_GROUP_RAID10)
+	if (map->type & BTRFS_BLOCK_GROUP_RAID10_MASK)
 		num_stripes = map->sub_stripes;
 	else
 		num_stripes = map->num_stripes;
@@ -6009,7 +6048,7 @@ static int __btrfs_map_block_for_discard(struct btrfs_fs_info *fs_info,
 	num_stripes = 1;
 	stripe_index = 0;
 	if (map->type & (BTRFS_BLOCK_GROUP_RAID0 |
-			 BTRFS_BLOCK_GROUP_RAID10)) {
+			 BTRFS_BLOCK_GROUP_RAID10_MASK)) {
 		if (map->type & BTRFS_BLOCK_GROUP_RAID0)
 			sub_stripes = 1;
 		else
@@ -6045,7 +6084,7 @@ static int __btrfs_map_block_for_discard(struct btrfs_fs_info *fs_info,
 		bioc->stripes[i].dev = map->stripes[stripe_index].dev;
 
 		if (map->type & (BTRFS_BLOCK_GROUP_RAID0 |
-				 BTRFS_BLOCK_GROUP_RAID10)) {
+				 BTRFS_BLOCK_GROUP_RAID10_MASK)) {
 			bioc->stripes[i].length = stripes_per_dev *
 				map->stripe_len;
 
@@ -6480,7 +6519,7 @@ static int __btrfs_map_block(struct btrfs_fs_info *fs_info,
 			mirror_num = 1;
 		}
 
-	} else if (map->type & BTRFS_BLOCK_GROUP_RAID10) {
+	} else if (map->type & BTRFS_BLOCK_GROUP_RAID10_MASK) {
 		u32 factor = map->num_stripes / map->sub_stripes;
 
 		stripe_nr = div_u64_rem(stripe_nr, factor, &stripe_index);
