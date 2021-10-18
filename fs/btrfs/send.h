@@ -81,6 +81,7 @@ enum btrfs_send_cmd {
 
 	/* Version 2 */
 	BTRFS_SEND_C_UTIMES2,
+	BTRFS_SEND_C_OTIME,
 	__BTRFS_SEND_C_MAX_V2,
 
 	/* End */

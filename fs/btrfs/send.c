@@ -2573,6 +2573,43 @@ out:
 	return ret;
 }
 
+static int send_inode_otime(struct send_ctx *sctx, const struct fs_path *fsp, u64 ino)
+{
+	int ret;
+	struct btrfs_path *path;
+	struct btrfs_inode_item *ii;
+	struct btrfs_key key;
+
+	if (!proto_cmd_ok(sctx, BTRFS_SEND_C_OTIME))
+		return 0;
+
+	path = alloc_path_for_send();
+	if (!path)
+		return -ENOMEM;
+
+	key.objectid = ino;
+	key.type = BTRFS_INODE_ITEM_KEY;
+	key.offset = 0;
+	ret = btrfs_search_slot(NULL, sctx->send_root, &key, path, 0, 0);
+	if (ret) {
+		if (ret > 0)
+			ret = -ENOENT;
+		goto out;
+	}
+
+	ret = begin_cmd(sctx, BTRFS_SEND_C_OTIME);
+	ii = btrfs_item_ptr(path->nodes[0], path->slots[0], struct btrfs_inode_item);
+	TLV_PUT_PATH(sctx, BTRFS_SEND_A_PATH, fsp);
+	TLV_PUT_BTRFS_TIMESPEC(sctx, BTRFS_SEND_A_OTIME, path->nodes[0], &ii->otime);
+	ret = send_cmd(sctx);
+
+tlv_put_failure:
+out:
+	btrfs_free_path(path);
+
+	return ret;
+}
+
 /*
  * Sends a BTRFS_SEND_C_MKXXX or SYMLINK command to user space. We don't have
  * a valid path yet because we did not process the refs yet. So, the inode
@@ -2651,6 +2688,9 @@ static int send_create_inode(struct send_ctx *sctx, u64 ino)
 	if (ret < 0)
 		goto out;
 
+	ret = send_inode_otime(sctx, p, ino);
+	if (ret < 0)
+		goto out;
 
 tlv_put_failure:
 out:
