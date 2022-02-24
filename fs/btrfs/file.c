@@ -247,57 +247,62 @@ void btrfs_cleanup_defrag_inodes(struct btrfs_fs_info *fs_info)
 static int __btrfs_run_defrag_inode(struct btrfs_fs_info *fs_info,
 				    struct inode_defrag *defrag)
 {
-	struct btrfs_root *inode_root;
-	struct inode *inode;
-	struct btrfs_ioctl_defrag_range_args range;
 	int ret = 0;
+	/* Initially we don't have the inode, use -1 as dummy isize */
+	u64 isize = (u64)-1;
 	u64 cur = 0;
 
-again:
-	if (test_bit(BTRFS_FS_STATE_REMOUNTING, &fs_info->fs_state))
-		goto cleanup;
-	if (!__need_auto_defrag(fs_info))
-		goto cleanup;
+	while (cur < isize) {
+		struct btrfs_ioctl_defrag_range_args range = { 0 };
+		struct btrfs_root *inode_root;
+		struct inode *inode;
 
-	/* get the inode */
-	inode_root = btrfs_get_fs_root(fs_info, defrag->root, true);
-	if (IS_ERR(inode_root)) {
-		ret = PTR_ERR(inode_root);
-		goto cleanup;
-	}
+		if (test_bit(BTRFS_FS_STATE_REMOUNTING, &fs_info->fs_state))
+			break;
+		if (!__need_auto_defrag(fs_info))
+			break;
 
-	inode = btrfs_iget(fs_info->sb, defrag->ino, inode_root);
-	btrfs_put_root(inode_root);
-	if (IS_ERR(inode)) {
-		ret = PTR_ERR(inode);
-		goto cleanup;
-	}
+		/* Check if the root is still there and grab it */
+		inode_root = btrfs_get_fs_root(fs_info, defrag->root, true);
+		if (IS_ERR(inode_root)) {
+			ret = PTR_ERR(inode_root);
+			break;
+		}
 
-	if (cur >= i_size_read(inode)) {
-		iput(inode);
-		goto cleanup;
-	}
+		/* Check if the inode is still there and grab it */
+		inode = btrfs_iget(fs_info->sb, defrag->ino, inode_root);
+		btrfs_put_root(inode_root);
+		if (IS_ERR(inode)) {
+			ret = PTR_ERR(inode);
+			break;
+		}
 
-	/* do a chunk of defrag */
-	clear_bit(BTRFS_INODE_IN_DEFRAG, &BTRFS_I(inode)->runtime_flags);
-	memset(&range, 0, sizeof(range));
-	range.len = (u64)-1;
-	range.start = cur;
-	range.extent_thresh = defrag->extent_thresh;
+		isize = i_size_read(inode);
 
-	sb_start_write(fs_info->sb);
-	ret = btrfs_defrag_file(inode, NULL, &range, defrag->transid,
+		/* do a chunk of defrag */
+		clear_bit(BTRFS_INODE_IN_DEFRAG, &BTRFS_I(inode)->runtime_flags);
+		range.len = (u64)-1;
+		range.start = cur;
+		range.extent_thresh = defrag->extent_thresh;
+
+		sb_start_write(fs_info->sb);
+		ret = btrfs_defrag_file(inode, NULL, &range, defrag->transid,
 				       BTRFS_DEFRAG_BATCH);
-	sb_end_write(fs_info->sb);
-	iput(inode);
+		sb_end_write(fs_info->sb);
+		iput(inode);
 
-	if (ret < 0)
-		goto cleanup;
+		if (ret < 0)
+			break;
 
-	cur = max(cur + fs_info->sectorsize, range.start);
-	goto again;
-
-cleanup:
+		/*
+		 * Range.start is the last scanned bytenr.
+		 *
+		 * And just in case the last scanned bytenr doesn't get
+		 * increased at all, at least start from the next sector
+		 * of current bytenr.
+		 */
+		cur = max(cur + fs_info->sectorsize, range.start);
+	}
 	kmem_cache_free(btrfs_inode_defrag_cachep, defrag);
 	return ret;
 }
