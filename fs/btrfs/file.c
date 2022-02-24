@@ -253,7 +253,7 @@ static int __btrfs_run_defrag_inode(struct btrfs_fs_info *fs_info,
 	u64 cur = 0;
 
 	while (cur < isize) {
-		struct btrfs_ioctl_defrag_range_args range = { 0 };
+		struct btrfs_defrag_ctrl ctrl = {0};
 		struct btrfs_root *inode_root;
 		struct inode *inode;
 
@@ -281,13 +281,14 @@ static int __btrfs_run_defrag_inode(struct btrfs_fs_info *fs_info,
 
 		/* do a chunk of defrag */
 		clear_bit(BTRFS_INODE_IN_DEFRAG, &BTRFS_I(inode)->runtime_flags);
-		range.len = (u64)-1;
-		range.start = cur;
-		range.extent_thresh = defrag->extent_thresh;
+		ctrl.len = (u64)-1;
+		ctrl.start = cur;
+		ctrl.newer_than = defrag->transid;
+		ctrl.extent_thresh = defrag->extent_thresh;
+		ctrl.max_sectors_to_defrag = BTRFS_DEFRAG_BATCH;
 
 		sb_start_write(fs_info->sb);
-		ret = btrfs_defrag_file(inode, NULL, &range, defrag->transid,
-				       BTRFS_DEFRAG_BATCH);
+		ret = btrfs_defrag_file(inode, NULL, &ctrl);
 		sb_end_write(fs_info->sb);
 		iput(inode);
 
@@ -295,13 +296,11 @@ static int __btrfs_run_defrag_inode(struct btrfs_fs_info *fs_info,
 			break;
 
 		/*
-		 * Range.start is the last scanned bytenr.
-		 *
 		 * And just in case the last scanned bytenr doesn't get
 		 * increased at all, at least start from the next sector
 		 * of current bytenr.
 		 */
-		cur = max(cur + fs_info->sectorsize, range.start);
+		cur = max(cur + fs_info->sectorsize, ctrl.last_scanned);
 	}
 	kmem_cache_free(btrfs_inode_defrag_cachep, defrag);
 	return ret;
