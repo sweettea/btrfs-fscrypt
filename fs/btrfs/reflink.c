@@ -797,11 +797,13 @@ static int btrfs_remap_file_range_prep(struct file *file_in, loff_t pos_in,
 	 * Can only reflink encrypted files if both files are encrypted with the
 	 * same policy and the policy is an EXPLICIT_IV policy.
 	 */
+#ifdef CONFIG_FS_ENCRYPTION
 	if (IS_ENCRYPTED(inode_in) || IS_ENCRYPTED(inode_out)) {
 		if (fscrypt_have_same_policy(inode_in, inode_out) != 0 ||
 		    fscrypt_explicit_iv_size(inode_out) == 0)
 			return -EINVAL;
 	}
+#endif
 
 	/* Don't make the dst file partly checksummed */
 	if ((BTRFS_I(inode_in)->flags & BTRFS_INODE_NODATASUM) !=

@@ -5598,10 +5598,13 @@ static int fixup_tree_root_location(struct btrfs_fs_info *fs_info,
 
 	leaf = path->nodes[0];
 	ref = btrfs_item_ptr(leaf, path->slots[0], struct btrfs_root_ref);
-	if (btrfs_root_ref_dirid(leaf, ref) != btrfs_ino(BTRFS_I(dir)) ||
-	    !btrfs_fscrypt_match_name(fname, leaf, (unsigned long)(ref + 1),
+	if (btrfs_root_ref_dirid(leaf, ref) != btrfs_ino(BTRFS_I(dir)))
+		goto out;
+#ifdef CONFIG_FS_ENCRYPTION
+	if (!btrfs_fscrypt_match_name(fname, leaf, (unsigned long)(ref + 1),
 				      btrfs_root_ref_name_len(leaf, ref)))
 		goto out;
+#endif
 
 	btrfs_release_path(path);
 
@@ -6014,6 +6017,7 @@ again:
 	btrfs_for_each_slot(root, &key, &found_key, path, ret) {
 		struct dir_entry *entry;
 		struct extent_buffer *leaf;
+		int slot;
 		u8 di_flags;
 
 		leaf = path->nodes[0];
