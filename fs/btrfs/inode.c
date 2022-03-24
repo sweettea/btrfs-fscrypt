@@ -1799,7 +1799,8 @@ next_slot:
 
 			ret = btrfs_cross_ref_exist(root, ino,
 						    found_key.offset -
-						    extent_offset, disk_bytenr, false);
+						    extent_offset, disk_bytenr,
+						    false, path);
 			if (ret) {
 				/*
 				 * ret could be -EIO if the above fails to read
@@ -4716,7 +4717,7 @@ int btrfs_truncate_block(struct btrfs_inode *inode, loff_t from, loff_t len,
 			goto out;
 		}
 	}
-	ret = btrfs_delalloc_reserve_metadata(inode, blocksize, blocksize);
+	ret = btrfs_delalloc_reserve_metadata(inode, blocksize, blocksize, false);
 	if (ret < 0) {
 		if (!only_release_metadata)
 			btrfs_free_reserved_data_space(inode, data_reserved,
@@ -7207,6 +7208,8 @@ noinline int can_nocow_extent(struct inode *inode, u64 offset, u64 *len,
 		*ram_bytes = btrfs_file_extent_ram_bytes(leaf, fi);
 	}
 
+	btrfs_release_path(path);
+
 	if (btrfs_extent_readonly(fs_info, disk_bytenr))
 		goto out;
 
@@ -7224,8 +7227,6 @@ noinline int can_nocow_extent(struct inode *inode, u64 offset, u64 *len,
 		}
 	}
 
-	btrfs_release_path(path);
-
 	/*
 	 * look for other files referencing this extent, if we
 	 * find any we must cow
@@ -7233,11 +7234,19 @@ noinline int can_nocow_extent(struct inode *inode, u64 offset, u64 *len,
 
 	ret = btrfs_cross_ref_exist(root, btrfs_ino(BTRFS_I(inode)),
 				    key.offset - backref_offset, disk_bytenr,
-				    strict);
+				    strict, path);
 	if (ret) {
 		ret = 0;
 		goto out;
 	}
+
+	/*
+	 * We don't need the path anymore, plus through the csum_exist_in_range()
+	 * call below we will end up allocating another path. So free the path
+	 * to avoid unnecessary extra memory usage.
+	 */
+	btrfs_free_path(path);
+	path = NULL;
 
 	/*
 	 * adjust disk_bytenr and num_bytes to cover just the bytes
@@ -7261,14 +7270,22 @@ out:
 }
 
 static int lock_extent_direct(struct inode *inode, u64 lockstart, u64 lockend,
-			      struct extent_state **cached_state, bool writing)
+			      struct extent_state **cached_state,
+			      unsigned int iomap_flags)
 {
+	const bool writing = (iomap_flags & IOMAP_WRITE);
+	const bool nowait = (iomap_flags & IOMAP_NOWAIT);
+	struct extent_io_tree *io_tree = &BTRFS_I(inode)->io_tree;
 	struct btrfs_ordered_extent *ordered;
 	int ret = 0;
 
 	while (1) {
-		lock_extent_bits(&BTRFS_I(inode)->io_tree, lockstart, lockend,
-				 cached_state);
+		if (nowait) {
+			if (!try_lock_extent(io_tree, lockstart, lockend))
+				return -EAGAIN;
+		} else {
+			lock_extent_bits(io_tree, lockstart, lockend, cached_state);
+		}
 		/*
 		 * We're concerned with the entire range that we're going to be
 		 * doing DIO to, so we need to make sure there's no ordered
@@ -7289,10 +7306,14 @@ static int lock_extent_direct(struct inode *inode, u64 lockstart, u64 lockend,
 							 lockstart, lockend)))
 			break;
 
-		unlock_extent_cached(&BTRFS_I(inode)->io_tree, lockstart, lockend,
-				     cached_state);
+		unlock_extent_cached(io_tree, lockstart, lockend, cached_state);
 
 		if (ordered) {
+			if (nowait) {
+				btrfs_put_ordered_extent(ordered);
+				ret = -EAGAIN;
+				break;
+			}
 			/*
 			 * If we are doing a DIO read and the ordered extent we
 			 * found is for a buffered write, we can not wait for it
@@ -7312,7 +7333,7 @@ static int lock_extent_direct(struct inode *inode, u64 lockstart, u64 lockend,
 			    test_bit(BTRFS_ORDERED_DIRECT, &ordered->flags))
 				btrfs_start_ordered_extent(ordered, 1);
 			else
-				ret = -ENOTBLK;
+				ret = nowait ? -EAGAIN : -ENOTBLK;
 			btrfs_put_ordered_extent(ordered);
 		} else {
 			/*
@@ -7328,7 +7349,7 @@ static int lock_extent_direct(struct inode *inode, u64 lockstart, u64 lockend,
 			 * ordered extent to complete while holding a lock on
 			 * that page.
 			 */
-			ret = -ENOTBLK;
+			ret = nowait ? -EAGAIN : -ENOTBLK;
 		}
 
 		if (ret)
@@ -7402,8 +7423,10 @@ static struct extent_map *create_io_em(struct btrfs_inode *inode, u64 start,
 static int btrfs_get_blocks_direct_write(struct extent_map **map,
 					 struct inode *inode,
 					 struct btrfs_dio_data *dio_data,
-					 u64 start, u64 len)
+					 u64 start, u64 len,
+					 unsigned int iomap_flags)
 {
+	const bool nowait = (iomap_flags & IOMAP_NOWAIT);
 	struct btrfs_fs_info *fs_info = btrfs_sb(inode->i_sb);
 	struct extent_map *em = *map;
 	int type;
@@ -7441,12 +7464,15 @@ static int btrfs_get_blocks_direct_write(struct extent_map **map,
 		struct extent_map *em2;
 
 		/* We can NOCOW, so only need to reserve metadata space. */
-		ret = btrfs_delalloc_reserve_metadata(BTRFS_I(inode), len, len);
+		ret = btrfs_delalloc_reserve_metadata(BTRFS_I(inode), len, len,
+						      nowait);
 		if (ret < 0) {
 			/* Our caller expects us to free the input extent map. */
 			free_extent_map(em);
 			*map = NULL;
 			btrfs_dec_nocow_writers(fs_info, block_start);
+			if (nowait && (ret == -ENOSPC || ret == -EDQUOT))
+				ret = -EAGAIN;
 			goto out;
 		}
 		space_reserved = true;
@@ -7471,6 +7497,9 @@ static int btrfs_get_blocks_direct_write(struct extent_map **map,
 		/* Our caller expects us to free the input extent map. */
 		free_extent_map(em);
 		*map = NULL;
+
+		if (nowait)
+			return -EAGAIN;
 
 		/* We have to COW, so need to reserve metadata and data space. */
 		ret = btrfs_delalloc_reserve_space(BTRFS_I(inode),
@@ -7543,34 +7572,58 @@ static int btrfs_dio_iomap_begin(struct inode *inode, loff_t start,
 	lockend = start + len - 1;
 
 	/*
-	 * The generic stuff only does filemap_write_and_wait_range, which
-	 * isn't enough if we've written compressed pages to this area, so we
-	 * need to flush the dirty pages again to make absolutely sure that any
-	 * outstanding dirty pages are on disk.
+	 * iomap_dio_rw() only does filemap_write_and_wait_range(), which isn't
+	 * enough if we've written compressed pages to this area, so we need to
+	 * flush the dirty pages again to make absolutely sure that any
+	 * outstanding dirty pages are on disk - the first flush only starts
+	 * compression on the data, while keeping the pages locked, so by the
+	 * time the second flush returns we know bios for the compressed pages
+	 * were submitted and finished, and the pages no longer under writeback.
+	 *
+	 * If we have a NOWAIT request and we have any pages in the range that
+	 * are locked, likely due to compression still in progress, we don't want
+	 * to block on page locks. We also don't want to block on pages marked as
+	 * dirty or under writeback (same as for the non-compression case).
+	 * iomap_dio_rw() did the same check, but after that and before we got
+	 * here, mmap'ed writes may have happened or buffered reads started
+	 * (readpage() and readahead(), which lock pages), as we haven't locked
+	 * the file range yet.
 	 */
 	if (test_bit(BTRFS_INODE_HAS_ASYNC_EXTENT,
 		     &BTRFS_I(inode)->runtime_flags)) {
-		ret = filemap_fdatawrite_range(inode->i_mapping, start,
-					       start + length - 1);
-		if (ret)
-			return ret;
+		if (flags & IOMAP_NOWAIT) {
+			if (filemap_range_needs_writeback(inode->i_mapping,
+							  lockstart, lockend))
+				return -EAGAIN;
+		} else {
+			ret = filemap_fdatawrite_range(inode->i_mapping, start,
+						       start + length - 1);
+			if (ret)
+				return ret;
+		}
 	}
 
-	dio_data = kzalloc(sizeof(*dio_data), GFP_NOFS);
-	if (!dio_data)
-		return -ENOMEM;
+	if (flags & IOMAP_NOWAIT) {
+		dio_data = kzalloc(sizeof(*dio_data), GFP_NOWAIT);
+		if (!dio_data)
+			return -EAGAIN;
+	} else {
+		dio_data = kzalloc(sizeof(*dio_data), GFP_NOFS);
+		if (!dio_data)
+			return -ENOMEM;
+	}
 
 	iomap->private = dio_data;
 
 
 	/*
 	 * If this errors out it's because we couldn't invalidate pagecache for
-	 * this range and we need to fallback to buffered.
+	 * this range and we need to fallback to buffered IO, or we are doing a
+	 * NOWAIT read/write and we need to block.
 	 */
-	if (lock_extent_direct(inode, lockstart, lockend, &cached_state, write)) {
-		ret = -ENOTBLK;
+	ret = lock_extent_direct(inode, lockstart, lockend, &cached_state, flags);
+	if (ret < 0)
 		goto err;
-	}
 
 	em = btrfs_get_extent(BTRFS_I(inode), NULL, 0, start, len);
 	if (IS_ERR(em)) {
@@ -7630,7 +7683,7 @@ static int btrfs_dio_iomap_begin(struct inode *inode, loff_t start,
 
 	if (write) {
 		ret = btrfs_get_blocks_direct_write(&em, inode, dio_data,
-						    start, len);
+						    start, len, flags);
 		if (ret < 0)
 			goto unlock_err;
 		unlock_extents = true;
@@ -10770,7 +10823,8 @@ ssize_t btrfs_do_encoded_write(struct kiocb *iocb, struct iov_iter *from,
 	ret = btrfs_qgroup_reserve_data(inode, &data_reserved, start, num_bytes);
 	if (ret)
 		goto out_free_data_space;
-	ret = btrfs_delalloc_reserve_metadata(inode, num_bytes, disk_num_bytes);
+	ret = btrfs_delalloc_reserve_metadata(inode, num_bytes, disk_num_bytes,
+					      false);
 	if (ret)
 		goto out_qgroup_free_data;
 
