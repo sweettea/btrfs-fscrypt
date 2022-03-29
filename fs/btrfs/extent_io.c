@@ -14,6 +14,7 @@
 #include <linux/pagevec.h>
 #include <linux/prefetch.h>
 #include <linux/fsverity.h>
+#include <crypto/sha2.h>
 #include "misc.h"
 #include "extent_io.h"
 #include "extent-io-tree.h"
@@ -2852,9 +2853,19 @@ static void end_bio_extent_writepage(struct bio *bio)
 	ASSERT(!bio_flagged(bio, BIO_CLONED));
 	bio_for_each_segment_all(bvec, bio, iter_all) {
 		struct page *page = bvec->bv_page;
-		struct inode *inode = page->mapping->host;
-		struct btrfs_fs_info *fs_info = btrfs_sb(inode->i_sb);
-		const u32 sectorsize = fs_info->sectorsize;
+		struct page *bounce_page = NULL;
+		struct inode *inode;
+		struct btrfs_fs_info *fs_info;
+		u32 sectorsize = fs_info->sectorsize;
+
+		if (fscrypt_is_bounce_page(page)) {
+			bounce_page = page;
+			page = fscrypt_pagecache_page(bounce_page);
+		}
+
+		inode = page->mapping->host;
+		fs_info = btrfs_sb(inode->i_sb);
+		sectorsize = fs_info->sectorsize;
 
 		/* Our read/write should always be sector aligned. */
 		if (!IS_ALIGNED(bvec->bv_offset, sectorsize))
@@ -2875,7 +2886,7 @@ static void end_bio_extent_writepage(struct bio *bio)
 		}
 
 		end_extent_writepage(page, error, start, end);
-
+		fscrypt_free_bounce_page(bounce_page);
 		btrfs_page_clear_writeback(fs_info, page, start, bvec->bv_len);
 	}
 
@@ -2992,6 +3003,20 @@ static struct extent_buffer *find_extent_buffer_readpage(
 	return eb;
 }
 
+static void btrfs_iv_add(u8 *dst, const u8 *src, int ivsize, u64 addend)
+{
+	int i;
+	__le64 *d = (__le64 *)dst, *s = (__le64 *)src;
+
+	ASSERT(ivsize % sizeof(u64) == 0);
+	for (i = 0; i < ivsize / sizeof(u64); i++) {
+		u64 word = le64_to_cpu(s[i]);
+		d[i] = cpu_to_le64(word + addend);
+		/* Carry bit. */
+		addend = word + addend < word;
+	}
+}
+
 /*
  * after a readpage IO is done, we need to:
  * clear the uptodate bits on error
@@ -3098,9 +3123,7 @@ static void end_bio_extent_readpage(struct bio *bio)
 						start, end, mirror,
 						error_bitmap);
 
-			ASSERT(bio_offset + len > bio_offset);
-			bio_offset += len;
-			continue;
+			goto next;
 		} else {
 			struct extent_buffer *eb;
 
@@ -3114,6 +3137,13 @@ readpage_ok:
 			loff_t i_size = i_size_read(inode);
 			pgoff_t end_index = i_size >> PAGE_SHIFT;
 
+			if (fscrypt_inode_uses_fs_layer_crypto(inode)) {
+				fscrypt_decrypt_pagecache_blocks(page,
+								 bvec->bv_len,
+								 bvec->bv_offset,
+								 bbio->iv);
+				/* TODO: check for errors */
+			}
 			/*
 			 * Zero out the remaining part if this range straddles
 			 * i_size.
@@ -3131,13 +3161,17 @@ readpage_ok:
 						  offset_in_page(end) + 1);
 			}
 		}
-		ASSERT(bio_offset + len > bio_offset);
-		bio_offset += len;
 
 		/* Update page status and unlock */
 		end_page_read(page, uptodate, start, len);
 		endio_readpage_release_extent(&processed, BTRFS_I(inode),
 					      start, end, PageUptodate(page));
+
+next:
+		ASSERT(bio_offset + len > bio_offset);
+		bio_offset += len;
+		btrfs_iv_add(bbio->iv, bbio->iv, bbio->ivsize,
+			     PAGE_SIZE / sectorsize);
 	}
 	/* Release the last extent */
 	endio_readpage_release_extent(&processed, NULL, 0, 0, false);
@@ -3259,7 +3293,9 @@ static int btrfs_bio_add_page(struct btrfs_bio_ctrl *bio_ctrl,
 			      struct page *page,
 			      u64 disk_bytenr, unsigned int size,
 			      unsigned int pg_offset,
-			      enum btrfs_compression_type compress_type)
+			      enum btrfs_compression_type compress_type,
+			      const u8 *iv,
+			      int ivsize)
 {
 	struct bio *bio = bio_ctrl->bio;
 	u32 bio_size = bio->bi_iter.bi_size;
@@ -3280,6 +3316,17 @@ static int btrfs_bio_add_page(struct btrfs_bio_ctrl *bio_ctrl,
 		contig = bio_end_sector(bio) == sector;
 	if (!contig)
 		return 0;
+
+	if (ivsize != btrfs_bio(bio)->ivsize)
+		return 0;
+	/*
+	 * TODO: we also need to check that the page we're adding has an IV
+	 * contiguous with the previous page in the bio.
+	 */
+	/* if (ivsize && */
+	    /* btrfs_iv_sub(iv, btrfs_bio(bio)->iv, ivsize) != */
+	    /* PAGE_SIZE / ???) { */
+	/* } */
 
 	real_size = min(bio_ctrl->len_to_oe_boundary,
 			bio_ctrl->len_to_stripe_boundary) - bio_size;
@@ -3360,7 +3407,8 @@ static int alloc_new_bio(struct btrfs_inode *inode,
 			 unsigned int opf,
 			 bio_end_io_t end_io_func,
 			 u64 disk_bytenr, u32 offset, u64 file_offset,
-			 enum btrfs_compression_type compress_type)
+			 enum btrfs_compression_type compress_type,
+			 const u8 *iv, int ivsize)
 {
 	struct btrfs_fs_info *fs_info = inode->root->fs_info;
 	struct bio *bio;
@@ -3384,6 +3432,11 @@ static int alloc_new_bio(struct btrfs_inode *inode,
 	if (ret < 0)
 		goto error;
 
+	if (bio_op(bio) == REQ_OP_READ && ivsize) {
+		btrfs_bio(bio)->ivsize = ivsize;
+		memcpy(btrfs_bio(bio)->iv, iv, ivsize);
+	}
+
 	if (wbc) {
 		/*
 		 * For Zone append we need the correct block_device that we are
@@ -3399,7 +3452,6 @@ static int alloc_new_bio(struct btrfs_inode *inode,
 				ret = PTR_ERR(dev);
 				goto error;
 			}
-
 			bio_set_dev(bio, dev->bdev);
 		} else {
 			/*
@@ -3445,13 +3497,35 @@ static int submit_extent_page(unsigned int opf,
 			      bio_end_io_t end_io_func,
 			      int mirror_num,
 			      enum btrfs_compression_type compress_type,
-			      bool force_bio_submit)
+			      bool force_bio_submit,
+			      const u8 *iv, int ivsize)
 {
 	int ret = 0;
+	struct page *bounce_page = NULL;
 	struct btrfs_inode *inode = BTRFS_I(page->mapping->host);
 	unsigned int cur = pg_offset;
 
 	ASSERT(bio_ctrl);
+
+	/* TODO: should this be async? */
+	if ((opf & REQ_OP_MASK) == REQ_OP_WRITE &&
+	    fscrypt_inode_uses_fs_layer_crypto(&inode->vfs_inode)) {
+		gfp_t gfp_flags = GFP_NOFS;
+
+		if (bio_ctrl->bio)
+			gfp_flags = GFP_NOWAIT | __GFP_NOWARN;
+		else
+			gfp_flags = GFP_NOFS;
+		bounce_page = fscrypt_encrypt_pagecache_blocks(page, size,
+							       pg_offset, iv,
+							       gfp_flags);
+		/*
+		 * TODO: other filesystems submit and retry if this fails. Also,
+		 * should this be a blk_status_t?
+		 */
+		if (IS_ERR(bounce_page))
+			return PTR_ERR(bounce_page);
+	}
 
 	ASSERT(pg_offset < PAGE_SIZE && size <= PAGE_SIZE &&
 	       pg_offset + size <= PAGE_SIZE);
@@ -3469,7 +3543,7 @@ static int submit_extent_page(unsigned int opf,
 			ret = alloc_new_bio(inode, bio_ctrl, wbc, opf,
 					    end_io_func, disk_bytenr, offset,
 					    page_offset(page) + cur,
-					    compress_type);
+					    compress_type, iv, ivsize);
 			if (ret < 0)
 				return ret;
 		}
@@ -3480,11 +3554,11 @@ static int submit_extent_page(unsigned int opf,
 		if (compress_type != BTRFS_COMPRESS_NONE)
 			added = btrfs_bio_add_page(bio_ctrl, page, disk_bytenr,
 					size - offset, pg_offset + offset,
-					compress_type);
+					compress_type, iv, ivsize);
 		else
 			added = btrfs_bio_add_page(bio_ctrl, page,
 					disk_bytenr + offset, size - offset,
-					pg_offset + offset, compress_type);
+					pg_offset + offset, compress_type, iv, ivsize);
 
 		/* Metadata page range should never be split */
 		if (!is_data_inode(&inode->vfs_inode))
@@ -3632,6 +3706,9 @@ static int btrfs_do_readpage(struct page *page, struct extent_map **em_cached,
 	size_t iosize;
 	size_t blocksize = inode->i_sb->s_blocksize;
 	struct extent_io_tree *tree = &BTRFS_I(inode)->io_tree;
+	/* TODO: see extent_map::iv */
+	u8 iv[32];
+	const int ivsize = fscrypt_explicit_iv_size(inode);
 
 	ret = set_page_extent_mapped(page);
 	if (ret < 0) {
@@ -3655,6 +3732,7 @@ static int btrfs_do_readpage(struct page *page, struct extent_map **em_cached,
 		unsigned long this_bio_flag = 0;
 		bool force_bio_submit = false;
 		u64 disk_bytenr;
+		bool encrypted;
 
 		ASSERT(IS_ALIGNED(cur, fs_info->sectorsize));
 		if (cur >= last_byte) {
@@ -3738,6 +3816,12 @@ static int btrfs_do_readpage(struct page *page, struct extent_map **em_cached,
 		if (prev_em_start)
 			*prev_em_start = em->start;
 
+		encrypted = test_bit(EXTENT_FLAG_ENCRYPTED, &em->flags);
+		if (encrypted) {
+			btrfs_iv_add(iv, em->iv, ivsize,
+				     extent_offset / blocksize);
+		}
+
 		free_extent_map(em);
 		em = NULL;
 
@@ -3782,7 +3866,8 @@ static int btrfs_do_readpage(struct page *page, struct extent_map **em_cached,
 					 pg_offset,
 					 end_bio_extent_readpage, 0,
 					 this_bio_flag,
-					 force_bio_submit);
+					 force_bio_submit, iv,
+					 encrypted ? ivsize : 0);
 		if (ret) {
 			/*
 			 * We have to unlock the remaining range, or the page
@@ -3986,6 +4071,9 @@ static noinline_for_stack int __extent_writepage_io(struct btrfs_inode *inode,
 	const unsigned int write_flags = wbc_to_write_flags(wbc);
 	bool has_error = false;
 	bool compressed;
+	/* TODO: see extent_map::iv */
+	u8 iv[32];
+	const int ivsize = fscrypt_explicit_iv_size(&inode->vfs_inode);
 
 	ret = btrfs_writepage_cow_fixup(page);
 	if (ret) {
@@ -4059,6 +4147,9 @@ static noinline_for_stack int __extent_writepage_io(struct btrfs_inode *inode,
 		if (btrfs_use_zone_append(inode, em->block_start))
 			opf = REQ_OP_ZONE_APPEND;
 
+		btrfs_iv_add(iv, em->iv, ivsize,
+			     extent_offset / fs_info->sectorsize);
+
 		free_extent_map(em);
 		em = NULL;
 
@@ -4098,7 +4189,7 @@ static noinline_for_stack int __extent_writepage_io(struct btrfs_inode *inode,
 					 disk_bytenr, iosize,
 					 cur - page_offset(page),
 					 end_bio_extent_writepage,
-					 0, 0, false);
+					 0, 0, false, iv, ivsize);
 		if (ret) {
 			has_error = true;
 			if (!saved_ret)
@@ -4593,7 +4684,7 @@ static int write_one_subpage_eb(struct extent_buffer *eb,
 	ret = submit_extent_page(REQ_OP_WRITE | write_flags, wbc,
 			&epd->bio_ctrl, page, eb->start, eb->len,
 			eb->start - page_offset(page),
-			end_bio_subpage_eb_writepage, 0, 0, false);
+			end_bio_subpage_eb_writepage, 0, 0, false, NULL, 0);
 	if (ret) {
 		btrfs_subpage_clear_writeback(fs_info, page, eb->start, eb->len);
 		set_btree_ioerr(page, eb);
@@ -4634,7 +4725,7 @@ static noinline_for_stack int write_one_eb(struct extent_buffer *eb,
 					 &epd->bio_ctrl, p, disk_bytenr,
 					 PAGE_SIZE, 0,
 					 end_bio_extent_buffer_writepage,
-					 0, 0, false);
+					 0, 0, false, NULL, 0);
 		if (ret) {
 			set_btree_ioerr(p, eb);
 			if (PageWriteback(p))
@@ -6633,7 +6724,7 @@ static int read_extent_buffer_subpage(struct extent_buffer *eb, int wait,
 				 page, eb->start, eb->len,
 				 eb->start - page_offset(page),
 				 end_bio_extent_readpage, mirror_num, 0,
-				 true);
+				 true, NULL, 0);
 	if (ret) {
 		/*
 		 * In the endio function, if we hit something wrong we will
@@ -6739,7 +6830,7 @@ int read_extent_buffer_pages(struct extent_buffer *eb, int wait, int mirror_num)
 			err = submit_extent_page(REQ_OP_READ | REQ_META, NULL,
 					 &bio_ctrl, page, page_offset(page),
 					 PAGE_SIZE, 0, end_bio_extent_readpage,
-					 mirror_num, 0, false);
+					 mirror_num, 0, false, NULL, 0);
 			if (err) {
 				/*
 				 * We failed to submit the bio so it's the
@@ -6911,6 +7002,54 @@ int memcmp_extent_buffer(const struct extent_buffer *eb, const void *ptrv,
 	return ret;
 }
 
+int memcmp_2_extent_buffers(const struct extent_buffer *eb1,
+			    unsigned long start1,
+			    const struct extent_buffer *eb2,
+			    unsigned long start2, unsigned long len)
+{
+	unsigned long i1, i2;
+	size_t offset1, offset2;
+	char *kaddr1, *kaddr2;
+
+	if (check_eb_range(eb1, start1, len) ||
+	    check_eb_range(eb2, start2, len))
+		return -EINVAL;
+
+	if (len == 0)
+		return 0;
+
+	i1 = get_eb_page_index(start1);
+	offset1 = get_eb_offset_in_page(eb1, start1);
+	kaddr1 = page_address(eb1->pages[i1]);
+
+	i2 = get_eb_page_index(start2);
+	offset2 = get_eb_offset_in_page(eb2, start2);
+	kaddr2 = page_address(eb2->pages[i2]);
+
+	while (true) {
+		size_t cur;
+		int ret;
+
+		cur = min3(len, PAGE_SIZE - offset1, PAGE_SIZE - offset2);
+		ret = memcmp(kaddr1 + offset1, kaddr2 + offset2, cur);
+		if (ret || cur == len)
+			return ret;
+		len -= cur;
+		offset1 += cur;
+		if (offset1 == PAGE_SIZE) {
+			offset1 = 0;
+			i1++;
+			kaddr1 = page_address(eb1->pages[i1]);
+		}
+		offset2 += cur;
+		if (offset2 == PAGE_SIZE) {
+			offset2 = 0;
+			i2++;
+			kaddr2 = page_address(eb2->pages[i2]);
+		}
+	}
+}
+
 /*
  * Check that the extent buffer is uptodate.
  *
@@ -7023,6 +7162,37 @@ void memzero_extent_buffer(const struct extent_buffer *eb, unsigned long start,
 		offset = 0;
 		i++;
 	}
+}
+
+void extent_buffer_sha256(const struct extent_buffer *eb, unsigned long start,
+			  unsigned long len, u8 *out)
+{
+	size_t cur;
+	size_t offset;
+	struct page *page;
+	char *kaddr;
+	unsigned long i = get_eb_page_index(start);
+	struct sha256_state sctx;
+
+	if (check_eb_range(eb, start, len))
+		return;
+
+	offset = get_eb_offset_in_page(eb, start);
+
+	sha256_init(&sctx);
+	while (len > 0) {
+		page = eb->pages[i];
+		assert_eb_page_uptodate(eb, page);
+
+		cur = min(len, PAGE_SIZE - offset);
+		kaddr = page_address(page);
+		sha256_update(&sctx, (u8 *)(kaddr + offset), cur);
+
+		len -= cur;
+		offset = 0;
+		i++;
+	}
+	sha256_final(&sctx, out);
 }
 
 void copy_extent_buffer_full(const struct extent_buffer *dst,

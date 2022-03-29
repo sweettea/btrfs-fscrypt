@@ -32,6 +32,7 @@
 #include <linux/migrate.h>
 #include <linux/sched/mm.h>
 #include <linux/iomap.h>
+#include <linux/random.h>
 #include <asm/unaligned.h>
 #include <linux/fsverity.h>
 #include "misc.h"
@@ -55,6 +56,7 @@
 #include "zoned.h"
 #include "subpage.h"
 #include "inode-item.h"
+#include "fscrypt.h"
 
 struct btrfs_iget_args {
 	u64 ino;
@@ -406,7 +408,8 @@ static noinline int cow_file_range_inline(struct btrfs_inode *inode, u64 size,
 	 * compressed) data fits in a leaf and the configured maximum inline
 	 * size.
 	 */
-	if (size < i_size_read(&inode->vfs_inode) ||
+	if (IS_ENCRYPTED(&inode->vfs_inode) ||
+	    size < i_size_read(&inode->vfs_inode) ||
 	    size > fs_info->sectorsize ||
 	    data_len > BTRFS_MAX_INLINE_DATA_SIZE(fs_info) ||
 	    data_len > fs_info->max_inline)
@@ -1010,7 +1013,7 @@ static int submit_one_async_extent(struct btrfs_inode *inode,
 				       ins.offset,		/* disk_num_bytes */
 				       0,			/* offset */
 				       1 << BTRFS_ORDERED_COMPRESSED,
-				       async_extent->compress_type);
+				       async_extent->compress_type, NULL, 0);
 	if (ret) {
 		btrfs_drop_extent_cache(inode, start, end, 0);
 		goto out_free_reserve;
@@ -1152,7 +1155,10 @@ static noinline int cow_file_range(struct btrfs_inode *inode,
 	unsigned clear_bits;
 	unsigned long page_ops;
 	bool extent_reserved = false;
+	const int ivsize = fscrypt_explicit_iv_size(&inode->vfs_inode);
 	int ret = 0;
+
+	ASSERT(ivsize <= sizeof_field(struct extent_map, iv));
 
 	if (btrfs_is_free_space_inode(inode)) {
 		ret = -EINVAL;
@@ -1259,12 +1265,14 @@ static noinline int cow_file_range(struct btrfs_inode *inode,
 			ret = PTR_ERR(em);
 			goto out_reserve;
 		}
-		free_extent_map(em);
+		if (ivsize)
+			get_random_bytes(em->iv, ivsize);
 
 		ret = btrfs_add_ordered_extent(inode, start, ram_size, ram_size,
 					       ins.objectid, cur_alloc_size, 0,
 					       1 << BTRFS_ORDERED_REGULAR,
-					       BTRFS_COMPRESS_NONE);
+					       BTRFS_COMPRESS_NONE, em->iv,
+					       ivsize);
 		if (ret)
 			goto out_drop_extent_cache;
 
@@ -1804,6 +1812,9 @@ static noinline int run_delalloc_nocow(struct btrfs_inode *inode,
 	struct btrfs_block_group *bg;
 	bool nocow = false;
 	struct can_nocow_file_extent_args nocow_args = { 0 };
+	u64 disk_bytenr = 0;
+	const bool force = inode->flags & BTRFS_INODE_NODATACOW;
+	const int ivsize = fscrypt_explicit_iv_size(&inode->vfs_inode);
 
 	path = btrfs_alloc_path();
 	if (!path) {
@@ -1982,13 +1993,15 @@ out_check:
 				goto error;
 			}
 			free_extent_map(em);
+			if (ivsize)
+				get_random_bytes(em->iv, ivsize);
 			ret = btrfs_add_ordered_extent(inode,
 					cur_offset, nocow_args.num_bytes,
 					nocow_args.num_bytes,
 					nocow_args.disk_bytenr,
 					nocow_args.num_bytes, 0,
 					1 << BTRFS_ORDERED_PREALLOC,
-					BTRFS_COMPRESS_NONE);
+					BTRFS_COMPRESS_NONE, em->iv, ivsize);
 			if (ret) {
 				btrfs_drop_extent_cache(inode, cur_offset,
 							nocow_end, 0);
@@ -2002,7 +2015,8 @@ out_check:
 						       nocow_args.num_bytes,
 						       0,
 						       1 << BTRFS_ORDERED_NOCOW,
-						       BTRFS_COMPRESS_NONE);
+						       BTRFS_COMPRESS_NONE,
+						       NULL, 0);
 			if (ret)
 				goto error;
 		}
@@ -2953,6 +2967,7 @@ int btrfs_writepage_cow_fixup(struct page *page)
 static int insert_reserved_file_extent(struct btrfs_trans_handle *trans,
 				       struct btrfs_inode *inode, u64 file_pos,
 				       struct btrfs_file_extent_item *stack_fi,
+				       const u8 *iv, int ivsize,
 				       const bool update_inode_bytes,
 				       u64 qgroup_reserved)
 {
@@ -2986,7 +3001,7 @@ static int insert_reserved_file_extent(struct btrfs_trans_handle *trans,
 	drop_args.start = file_pos;
 	drop_args.end = file_pos + num_bytes;
 	drop_args.replace_extent = true;
-	drop_args.extent_item_size = sizeof(*stack_fi);
+	drop_args.extent_item_size = sizeof(*stack_fi) + ivsize;
 	ret = btrfs_drop_extents(trans, root, inode, &drop_args);
 	if (ret)
 		goto out;
@@ -2997,7 +3012,7 @@ static int insert_reserved_file_extent(struct btrfs_trans_handle *trans,
 		ins.type = BTRFS_EXTENT_DATA_KEY;
 
 		ret = btrfs_insert_empty_item(trans, root, path, &ins,
-					      sizeof(*stack_fi));
+					      sizeof(*stack_fi) + ivsize);
 		if (ret)
 			goto out;
 	}
@@ -3006,6 +3021,12 @@ static int insert_reserved_file_extent(struct btrfs_trans_handle *trans,
 	write_extent_buffer(leaf, stack_fi,
 			btrfs_item_ptr_offset(leaf, path->slots[0]),
 			sizeof(struct btrfs_file_extent_item));
+	if (ivsize) {
+		write_extent_buffer(leaf, iv,
+				btrfs_item_ptr_offset(leaf, path->slots[0]) +
+				sizeof(struct btrfs_file_extent_item),
+				ivsize);
+	}
 
 	btrfs_mark_buffer_dirty(leaf);
 	btrfs_release_path(path);
@@ -3061,6 +3082,7 @@ static void btrfs_release_delalloc_bytes(struct btrfs_fs_info *fs_info,
 	btrfs_put_block_group(cache);
 }
 
+/* TODO: this needs to include IV */
 static int insert_ordered_extent_file_extent(struct btrfs_trans_handle *trans,
 					     struct btrfs_ordered_extent *oe)
 {
@@ -3080,7 +3102,11 @@ static int insert_ordered_extent_file_extent(struct btrfs_trans_handle *trans,
 	btrfs_set_stack_file_extent_num_bytes(&stack_fi, num_bytes);
 	btrfs_set_stack_file_extent_ram_bytes(&stack_fi, ram_bytes);
 	btrfs_set_stack_file_extent_compression(&stack_fi, oe->compress_type);
-	/* Encryption and other encoding is reserved and all 0 */
+	if (IS_ENCRYPTED(oe->inode)) {
+		btrfs_set_stack_file_extent_encryption(&stack_fi,
+						      BTRFS_ENCRYPTION_FSCRYPT);
+	}
+	/* Other encoding is reserved and always 0 */
 
 	/*
 	 * For delalloc, when completing an ordered extent we update the inode's
@@ -3094,6 +3120,8 @@ static int insert_ordered_extent_file_extent(struct btrfs_trans_handle *trans,
 
 	return insert_reserved_file_extent(trans, BTRFS_I(oe->inode),
 					   oe->file_offset, &stack_fi,
+					   oe->iv,
+					   fscrypt_explicit_iv_size(oe->inode),
 					   update_inode_bytes, oe->qgroup_rsv);
 }
 
@@ -3820,6 +3848,31 @@ static noinline int acls_after_inode_item(struct extent_buffer *leaf,
 	return 1;
 }
 
+/* TODO: get rid of this again. */
+static void btrfs_set_inode_ops(struct inode *inode, dev_t rdev)
+{
+	switch (inode->i_mode & S_IFMT) {
+	case S_IFREG:
+		inode->i_mapping->a_ops = &btrfs_aops;
+		inode->i_fop = &btrfs_file_operations;
+		inode->i_op = &btrfs_file_inode_operations;
+		break;
+	case S_IFDIR:
+		inode->i_fop = &btrfs_dir_file_operations;
+		inode->i_op = &btrfs_dir_inode_operations;
+		break;
+	case S_IFLNK:
+		inode->i_op = &btrfs_symlink_inode_operations;
+		inode_nohighmem(inode);
+		inode->i_mapping->a_ops = &btrfs_aops;
+		break;
+	default:
+		inode->i_op = &btrfs_special_inode_operations;
+		init_special_inode(inode, inode->i_mode, rdev);
+		break;
+	}
+}
+
 /*
  * read an inode from the btree into the in-memory inode
  */
@@ -3996,27 +4049,7 @@ cache_acl:
 	if (!maybe_acls)
 		cache_no_acl(inode);
 
-	switch (inode->i_mode & S_IFMT) {
-	case S_IFREG:
-		inode->i_mapping->a_ops = &btrfs_aops;
-		inode->i_fop = &btrfs_file_operations;
-		inode->i_op = &btrfs_file_inode_operations;
-		break;
-	case S_IFDIR:
-		inode->i_fop = &btrfs_dir_file_operations;
-		inode->i_op = &btrfs_dir_inode_operations;
-		break;
-	case S_IFLNK:
-		inode->i_op = &btrfs_symlink_inode_operations;
-		inode_nohighmem(inode);
-		inode->i_mapping->a_ops = &btrfs_aops;
-		break;
-	default:
-		inode->i_op = &btrfs_special_inode_operations;
-		init_special_inode(inode, inode->i_mode, rdev);
-		break;
-	}
-
+	btrfs_set_inode_ops(inode, rdev);
 	btrfs_sync_inode_flags_to_i_flags(inode);
 	return 0;
 }
@@ -5785,10 +5818,16 @@ struct inode *btrfs_lookup_dentry(struct inode *dir, struct dentry *dentry)
 	if (dentry->d_name.len > BTRFS_NAME_LEN)
 		return ERR_PTR(-ENAMETOOLONG);
 
-	memset(&fname, 0, sizeof(fname));
-	fname.usr_fname = &dentry->d_name;
-	fname.disk_name.name = (unsigned char *)dentry->d_name.name;
-	fname.disk_name.len = dentry->d_name.len;
+	if (BTRFS_I(dir)->flags & BTRFS_INODE_FSCRYPT_CONTEXT) {
+		ret = fscrypt_prepare_lookup(dir, dentry, &fname);
+		if (ret)
+			return ERR_PTR(ret);
+	} else {
+		memset(&fname, 0, sizeof(fname));
+		fname.usr_fname = &dentry->d_name;
+		fname.disk_name.name = (unsigned char *)dentry->d_name.name;
+		fname.disk_name.len = dentry->d_name.len;
+	}
 
 	ret = btrfs_inode_by_name(dir, &fname, &location, &di_type);
 	if (ret < 0)
@@ -6015,8 +6054,39 @@ again:
 		di_flags = btrfs_dir_flags(leaf, di);
 		entry = addr;
 		name_ptr = (char *)(entry + 1);
-		read_extent_buffer(leaf, name_ptr,
-				   (unsigned long)(di + 1), name_len);
+		if (di_flags & BTRFS_FT_FSCRYPT_NAME) {
+			/*
+			 * TODO: can this race with the check for the context?
+			 */
+			struct fscrypt_str oname = FSTR_INIT(name_ptr,
+							     PAGE_SIZE);
+			u32 hash = 0, minor_hash = 0;
+
+			read_extent_buffer(leaf, fstr.name,
+					   (unsigned long)(di + 1), name_len);
+			fstr.len = name_len;
+			/*
+			 * We're iterating through DIR_INDEX items, so we don't
+			 * have the DIR_ITEM hash handy. Only compute it if
+			 * we'll need it.
+			 */
+			if (!fscrypt_has_encryption_key(inode)) {
+				u64 name_hash;
+
+				name_hash = btrfs_name_hash(fstr.name,
+							    name_len);
+				hash = name_hash;
+				minor_hash = name_hash >> 32;
+			}
+			ret = fscrypt_fname_disk_to_usr(inode, hash, minor_hash,
+							&fstr, &oname);
+			if (ret)
+				goto err;
+			name_len = oname.len;
+		} else {
+			read_extent_buffer(leaf, name_ptr,
+					   (unsigned long)(di + 1), name_len);
+		}
 		put_unaligned(name_len, &entry->name_len);
 		put_unaligned(
 			fs_ftype_to_dtype(btrfs_dir_flags_to_ftype(di_flags)),
@@ -6232,6 +6302,29 @@ int btrfs_new_inode_prepare(struct btrfs_new_inode_args *args,
 	if (fscrypt_is_nokey_name(args->dentry))
 		return -ENOKEY;
 
+	if (IS_ENCRYPTED(dir) &&
+	    !(BTRFS_I(dir)->flags & BTRFS_INODE_FSCRYPT_CONTEXT)) {
+		struct inode *root_inode;
+		bool encrypt;
+
+		root_inode = btrfs_iget(inode->i_sb, BTRFS_FIRST_FREE_OBJECTID,
+					BTRFS_I(dir)->root);
+		if (IS_ERR(root_inode))
+			return PTR_ERR(root_inode);
+		/*
+		 * TODO: we should do something based on set_encryption_policy
+		 * instead of this hack.
+		 */
+		ret = fscrypt_prepare_new_inode(root_inode, dir, &encrypt);
+		if (!ret) {
+			ret = fscrypt_set_context(dir, NULL);
+			if (ret)
+				fscrypt_put_encryption_info(dir); /* TODO: racy? */
+		}
+		iput(root_inode);
+		if (ret)
+			return ret;
+	}
 
 	ret = fscrypt_setup_filename(dir, &args->dentry->d_name, 0,
 				     &args->fname);
@@ -6263,6 +6356,8 @@ int btrfs_new_inode_prepare(struct btrfs_new_inode_args *args,
 	if (dir->i_security)
 		(*trans_num_items)++;
 #endif
+	if (args->encrypt)
+		(*trans_num_items)++; /* 1 to add fscrypt xattr */
 	if (args->orphan) {
 		/* 1 to add orphan item */
 		(*trans_num_items)++;
@@ -6514,6 +6609,14 @@ int btrfs_create_new_inode(struct btrfs_trans_handle *trans,
 		}
 	}
 
+	if (args->encrypt) {
+		ret = fscrypt_set_context(inode, trans);
+		if (ret) {
+			btrfs_abort_transaction(trans, ret);
+			goto discard;
+		}
+	}
+
 	inode_tree_add(inode);
 
 	trace_btrfs_inode_new(inode);
@@ -6730,6 +6833,10 @@ static int btrfs_link(struct dentry *old_dentry, struct inode *dir,
 
 	if (inode->i_nlink >= BTRFS_LINK_MAX)
 		return -EMLINK;
+
+	err = fscrypt_prepare_link(old_dentry, dir, dentry);
+	if (err)
+		return err;
 
 	err = fscrypt_setup_filename(dir, &dentry->d_name, 0, &fname);
 	if (err)
@@ -7008,8 +7115,28 @@ next:
 
 	btrfs_extent_item_to_extent_map(inode, path, item, !page, em);
 
-	if (extent_type == BTRFS_FILE_EXTENT_REG ||
-	    extent_type == BTRFS_FILE_EXTENT_PREALLOC) {
+	if (extent_type == BTRFS_FILE_EXTENT_REG) {
+		int ivsize = (btrfs_item_size(leaf, path->slots[0]) -
+			      sizeof(*item));
+		int expected_ivsize = 0;
+
+		if (btrfs_file_extent_encryption(leaf, item) ==
+		    BTRFS_ENCRYPTION_FSCRYPT) {
+			expected_ivsize =
+				fscrypt_explicit_iv_size(&inode->vfs_inode);
+			ASSERT(expected_ivsize <= sizeof(em->iv));
+		}
+		if (ivsize != expected_ivsize) {
+			btrfs_crit(fs_info,
+		"invalid encryption IV size for inode %llu, have %d expect %d",
+				   btrfs_ino(inode), ivsize, expected_ivsize);
+			ret = -EUCLEAN;
+			goto out;
+		}
+		read_extent_buffer(leaf, em->iv, (unsigned long)item->iv,
+				   ivsize);
+		goto insert;
+	} else if (extent_type == BTRFS_FILE_EXTENT_PREALLOC) {
 		goto insert;
 	} else if (extent_type == BTRFS_FILE_EXTENT_INLINE) {
 		unsigned long ptr;
@@ -7238,7 +7365,7 @@ static struct extent_map *btrfs_create_dio_extent(struct btrfs_inode *inode,
 				       block_len, 0,
 				       (1 << type) |
 				       (1 << BTRFS_ORDERED_DIRECT),
-				       BTRFS_COMPRESS_NONE);
+				       BTRFS_COMPRESS_NONE, NULL, 0);
 	if (ret) {
 		if (em) {
 			free_extent_map(em);
@@ -9013,6 +9140,7 @@ void btrfs_test_destroy_inode(struct inode *inode)
 
 void btrfs_free_inode(struct inode *inode)
 {
+	fscrypt_free_inode(inode);
 	kmem_cache_free(btrfs_inode_cachep, BTRFS_I(inode));
 }
 
@@ -9069,7 +9197,10 @@ int btrfs_drop_inode(struct inode *inode)
 
 	if (root == NULL || btrfs_root_refs(&root->root_item) == 0)
 		return 1;
-	return generic_drop_inode(inode);
+	ret = generic_drop_inode(inode);
+	if (ret)
+		return ret;
+	return fscrypt_drop_inode(inode);
 }
 
 static void init_once(void *foo)
@@ -9674,8 +9805,15 @@ static int btrfs_rename2(struct user_namespace *mnt_userns, struct inode *old_di
 			 struct dentry *old_dentry, struct inode *new_dir,
 			 struct dentry *new_dentry, unsigned int flags)
 {
+	int ret;
+
 	if (flags & ~(RENAME_NOREPLACE | RENAME_EXCHANGE | RENAME_WHITEOUT))
 		return -EINVAL;
+
+	ret = fscrypt_prepare_rename(old_dir, old_dentry, new_dir, new_dentry,
+				     flags);
+	if (ret)
+		return ret;
 
 	if (flags & RENAME_EXCHANGE)
 		return btrfs_rename_exchange(old_dir, old_dentry, new_dir,
@@ -9894,15 +10032,20 @@ static int btrfs_symlink(struct user_namespace *mnt_userns, struct inode *dir,
 	};
 	unsigned int trans_num_items;
 	int err;
-	int name_len;
 	int datasize;
 	unsigned long ptr;
 	struct btrfs_file_extent_item *ei;
 	struct extent_buffer *leaf;
 
 	name_len = strlen(symname);
-	if (name_len > BTRFS_MAX_INLINE_DATA_SIZE(fs_info))
-		return -ENAMETOOLONG;
+	/*
+	 * TODO: is this max off by one since the count includes the null byte?
+	 */
+	err = fscrypt_prepare_symlink(dir, symname, name_len,
+				      BTRFS_MAX_INLINE_DATA_SIZE(fs_info),
+				      &disk_link);
+	if (err)
+		return err;
 
 	inode = new_inode(dir->i_sb);
 	if (!inode)
@@ -9911,8 +10054,8 @@ static int btrfs_symlink(struct user_namespace *mnt_userns, struct inode *dir,
 	inode->i_op = &btrfs_symlink_inode_operations;
 	inode_nohighmem(inode);
 	inode->i_mapping->a_ops = &btrfs_aops;
-	btrfs_i_size_write(BTRFS_I(inode), name_len);
-	inode_set_bytes(inode, name_len);
+	btrfs_i_size_write(BTRFS_I(inode), disk_link.len - 1);
+	inode_set_bytes(inode, disk_link.len - 1);
 
 	new_inode_args.inode = inode;
 	err = btrfs_new_inode_prepare(&new_inode_args, &trans_num_items);
@@ -9942,7 +10085,7 @@ static int btrfs_symlink(struct user_namespace *mnt_userns, struct inode *dir,
 	key.objectid = btrfs_ino(BTRFS_I(inode));
 	key.offset = 0;
 	key.type = BTRFS_EXTENT_DATA_KEY;
-	datasize = btrfs_file_extent_calc_inline_size(name_len);
+	datasize = btrfs_file_extent_calc_inline_size(disk_link.len - 1);
 	err = btrfs_insert_empty_item(trans, root, path, &key,
 				      datasize);
 	if (err) {
@@ -9958,13 +10101,37 @@ static int btrfs_symlink(struct user_namespace *mnt_userns, struct inode *dir,
 	btrfs_set_file_extent_generation(leaf, ei, trans->transid);
 	btrfs_set_file_extent_type(leaf, ei,
 				   BTRFS_FILE_EXTENT_INLINE);
-	btrfs_set_file_extent_encryption(leaf, ei, 0);
+	btrfs_set_file_extent_encryption(leaf, ei,
+					 IS_ENCRYPTED(inode) ?
+					 BTRFS_ENCRYPTION_FSCRYPT : 0);
 	btrfs_set_file_extent_compression(leaf, ei, 0);
 	btrfs_set_file_extent_other_encoding(leaf, ei, 0);
-	btrfs_set_file_extent_ram_bytes(leaf, ei, name_len);
+	/*
+	 * TODO: I'm undecided whether this should be the plaintext length or
+	 * the ciphertext length. For now, go with the ciphertext length so that
+	 * we don't need to change btrfs_get_extent() or the tree checker.
+	 */
+	btrfs_set_file_extent_ram_bytes(leaf, ei, disk_link.len - 1);
 
 	ptr = btrfs_file_extent_inline_start(ei);
-	write_extent_buffer(leaf, symname, ptr, name_len);
+	if (IS_ENCRYPTED(inode)) {
+		/*
+		 * TODO: can we avoid allocating the on-disk name by writing
+		 * straight into the extent buffer?
+		 */
+		err = fscrypt_encrypt_symlink(inode, symname, name_len,
+					      &disk_link);
+		if (err) {
+			btrfs_abort_transaction(trans, err);
+			btrfs_free_path(path);
+			discard_new_inode(inode);
+			inode = NULL;
+			goto out;
+		}
+	}
+	write_extent_buffer(leaf, disk_link.name, ptr, disk_link.len - 1);
+	if (disk_link.name != (unsigned char *)symname)
+		kfree(disk_link.name);
 	btrfs_mark_buffer_dirty(leaf);
 	btrfs_free_path(path);
 
@@ -9979,6 +10146,39 @@ out_inode:
 	if (err)
 		iput(inode);
 	return err;
+}
+
+static const char *btrfs_get_link(struct dentry *dentry, struct inode *inode,
+				  struct delayed_call *done)
+{
+	struct page *cpage;
+	const char *paddr;
+
+	/*
+	 * TODO: should we have a separate encrypted symlink inode operations
+	 * instead of this conditional like ext4?
+	 */
+	if (!IS_ENCRYPTED(inode))
+		return page_get_link(dentry, inode, done);
+
+	if (!dentry)
+		return ERR_PTR(-ECHILD);
+	/*
+	 * TODO: this caches the encrypted page in the page cache, then caches
+	 * the decrypted name in the inode. That seems weird, but it's what
+	 * fscrypt gives us.
+	 */
+	cpage = read_mapping_page(inode->i_mapping, 0, NULL);
+	if (IS_ERR(cpage))
+		return ERR_CAST(cpage);
+	/*
+	 * TODO: the s_blocksize argument is cargo-culted from ext4. It might
+	 * not be right.
+	 */
+	paddr = fscrypt_get_symlink(inode, page_address(cpage),
+				    inode->i_sb->s_blocksize, done);
+	put_page(cpage);
+	return paddr;
 }
 
 static struct btrfs_trans_handle *insert_prealloc_file_extent(
@@ -10004,16 +10204,18 @@ static struct btrfs_trans_handle *insert_prealloc_file_extent(
 	btrfs_set_stack_file_extent_num_bytes(&stack_fi, len);
 	btrfs_set_stack_file_extent_ram_bytes(&stack_fi, len);
 	btrfs_set_stack_file_extent_compression(&stack_fi, BTRFS_COMPRESS_NONE);
-	/* Encryption and other encoding is reserved and all 0 */
+	btrfs_set_stack_file_extent_compression(&stack_fi,
+						BTRFS_ENCRYPTION_NONE);
+	/* Other encoding is reserved and always 0 */
 
 	qgroup_released = btrfs_qgroup_release_data(inode, file_offset, len);
 	if (qgroup_released < 0)
 		return ERR_PTR(qgroup_released);
 
 	if (trans) {
-		ret = insert_reserved_file_extent(trans, inode,
-						  file_offset, &stack_fi,
-						  true, qgroup_released);
+		ret = insert_reserved_file_extent(trans, inode, file_offset,
+						  &stack_fi, NULL, 0, true,
+						  qgroup_released);
 		if (ret)
 			goto free_qgroup;
 		return trans;
@@ -10990,7 +11192,7 @@ ssize_t btrfs_do_encoded_write(struct kiocb *iocb, struct iov_iter *from,
 				       encoded->unencoded_offset,
 				       (1 << BTRFS_ORDERED_ENCODED) |
 				       (1 << BTRFS_ORDERED_COMPRESSED),
-				       compression);
+				       compression, NULL, 0);
 	if (ret) {
 		btrfs_drop_extent_cache(inode, start, end, 0);
 		goto out_free_reserved;
@@ -11583,7 +11785,7 @@ static const struct inode_operations btrfs_special_inode_operations = {
 	.update_time	= btrfs_update_time,
 };
 static const struct inode_operations btrfs_symlink_inode_operations = {
-	.get_link	= page_get_link,
+	.get_link	= btrfs_get_link,
 	.getattr	= btrfs_getattr,
 	.setattr	= btrfs_setattr,
 	.permission	= btrfs_permission,
@@ -11593,4 +11795,8 @@ static const struct inode_operations btrfs_symlink_inode_operations = {
 
 const struct dentry_operations btrfs_dentry_operations = {
 	.d_delete	= btrfs_dentry_delete,
+	/* TODO: this may not be the best way to do this. */
+#ifdef CONFIG_FS_ENCRYPTION
+	.d_revalidate	= fscrypt_d_revalidate,
+#endif
 };

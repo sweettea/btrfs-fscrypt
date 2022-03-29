@@ -118,6 +118,7 @@
  * the FS
  */
 #define BTRFS_INODE_ITEM_KEY		1
+/* TODO: encrypted inode refs and extrefs */
 #define BTRFS_INODE_REF_KEY		12
 #define BTRFS_INODE_EXTREF_KEY		13
 #define BTRFS_XATTR_ITEM_KEY		24
@@ -633,6 +634,8 @@ struct btrfs_dir_item {
 } __attribute__ ((__packed__));
 
 #define BTRFS_ROOT_SUBVOL_RDONLY	(1ULL << 0)
+/* Top-level subvolume directory is encrypted with fscrypt. */
+#define BTRFS_ROOT_SUBVOL_FSCRYPT	(1ULL << 1)
 
 /*
  * Internal in-memory flag that a subvolume has been marked for deletion but
@@ -788,6 +791,12 @@ enum {
 	BTRFS_NR_FILE_EXTENT_TYPES = 3,
 };
 
+enum {
+	BTRFS_ENCRYPTION_NONE,
+	BTRFS_ENCRYPTION_FSCRYPT,
+	BTRFS_NR_ENCRYPTION_TYPES,
+};
+
 struct btrfs_file_extent_item {
 	/*
 	 * transaction id that created this extent
@@ -838,6 +847,14 @@ struct btrfs_file_extent_item {
 	 */
 	__le64 num_bytes;
 
+	/*
+	 * Encryption initialization vector. Only present if extent is
+	 * encrypted.
+	 * TODO: do we also want to store ivsize? It's currently implicit to the
+	 * end of the item, but that means we can never add anything else to
+	 * this item type.
+	 */
+	__u8 iv[0];
 } __attribute__ ((__packed__));
 
 struct btrfs_csum_item {

@@ -361,6 +361,8 @@ struct btrfs_fs_devices {
  */
 struct btrfs_bio {
 	unsigned int mirror_num;
+	/* TODO: we should actually just track whether it's encrypted. */
+	int ivsize;
 
 	/* for direct I/O */
 	u64 file_offset;
@@ -369,6 +371,8 @@ struct btrfs_bio {
 	struct btrfs_device *device;
 	u8 *csum;
 	u8 csum_inline[BTRFS_BIO_INLINE_CSUM_SIZE];
+	/* TODO: see extent_map::iv */
+	u8 iv[32];
 	struct bvec_iter iter;
 
 	/*

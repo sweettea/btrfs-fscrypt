@@ -1386,8 +1386,8 @@ int btrfs_insert_delayed_dir_index(struct btrfs_trans_handle *trans,
 	ret = __btrfs_add_delayed_insertion_item(delayed_node, delayed_item);
 	if (unlikely(ret)) {
 		btrfs_err(trans->fs_info,
-			  "err add delayed dir index item(name: %.*s) into the insertion tree of the delayed node(root id: %llu, inode id: %llu, errno: %d)",
-			  name_len, name, delayed_node->root->root_key.objectid,
+			  "err add delayed dir index item into the insertion tree of the delayed node(root id: %llu, inode id: %llu, errno: %d)",
+			  delayed_node->root->root_key.objectid,
 			  delayed_node->inode_id, ret);
 		BUG();
 	}

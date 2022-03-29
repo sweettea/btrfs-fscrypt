@@ -5,6 +5,7 @@
 
 #include "ctree.h"
 #include "disk-io.h"
+#include "fscrypt.h"
 #include "transaction.h"
 
 /*
@@ -119,6 +120,9 @@ int btrfs_insert_dir_item(struct btrfs_trans_handle *trans,
 	struct btrfs_disk_key disk_key;
 	u32 data_size;
 
+	if (fname_encrypted(fname))
+		type |= BTRFS_FT_FSCRYPT_NAME;
+
 	key.objectid = btrfs_ino(dir);
 	key.type = BTRFS_DIR_ITEM_KEY;
 	key.offset = btrfs_name_hash(fname_name(fname), fname_len(fname));
@@ -197,6 +201,11 @@ static struct btrfs_dir_item *btrfs_lookup_match_dir(
  * __btrfs_lookup_dir_item -> btrfs_lookup_dir_item
  */
 
+static inline bool btrfs_dir_item_encrypted(struct extent_buffer *leaf,
+					    struct btrfs_dir_item *dir_item)
+{
+	return btrfs_dir_flags(leaf, dir_item) & BTRFS_FT_FSCRYPT_NAME;
+}
 
 /*
  * helper function to look at the directory item pointed to by 'path'
@@ -225,7 +234,9 @@ __btrfs_match_dir_item_name(struct btrfs_fs_info *fs_info,
 			dir_name_len +
 			btrfs_dir_data_len(leaf, dir_item);
 
-		if (btrfs_fscrypt_match_name(fname, leaf,
+		if (btrfs_dir_item_encrypted(leaf, dir_item) ==
+		    fname_encrypted(fname) &&
+		    btrfs_fscrypt_match_name(fname, leaf,
 					     (unsigned long)(dir_item + 1),
 					     dir_name_len)) {
 			if (name_len)
@@ -301,6 +312,18 @@ again:
 	} else {
 		dir_item = __btrfs_match_dir_item_name(root->fs_info, path,
 						       fname, name_len);
+	}
+	if (!dir_item && fname_encrypted(fname)) { /* TODO: && fname->usr_fname? */
+		unencrypted_fname = (struct fscrypt_name){
+			.usr_fname = fname->usr_fname,
+			.disk_name = {
+				.name = (unsigned char *)fname->usr_fname->name,
+				.len = fname->usr_fname->len,
+			},
+		};
+		fname = &unencrypted_fname;
+		btrfs_release_path(path);
+		goto again;
 	}
 	return dir_item;
 }
