@@ -3,15 +3,19 @@
  * Copyright (C) 2007 Oracle.  All rights reserved.
  */
 
+#include <linux/crc32.h>
 #include "ctree.h"
 #include "inode-item.h"
 #include "disk-io.h"
+#include "fscrypt.h"
 #include "transaction.h"
 #include "print-tree.h"
 
-struct btrfs_inode_ref *btrfs_find_name_in_backref(struct extent_buffer *leaf,
-						   int slot, const char *name,
-						   int name_len)
+/* TODO: names */
+
+static struct btrfs_inode_ref *
+__btrfs_find_name_in_backref(struct extent_buffer *leaf, int slot,
+			     const struct fscrypt_name *fname)
 {
 	struct btrfs_inode_ref *ref;
 	unsigned long ptr;
@@ -27,17 +31,25 @@ struct btrfs_inode_ref *btrfs_find_name_in_backref(struct extent_buffer *leaf,
 		len = btrfs_inode_ref_name_len(leaf, ref);
 		name_ptr = (unsigned long)(ref + 1);
 		cur_offset += len + sizeof(*ref);
-		if (len != name_len)
-			continue;
-		if (memcmp_extent_buffer(leaf, name, name_ptr, name_len) == 0)
+		if (btrfs_fscrypt_match_name(fname, leaf, name_ptr, len))
 			return ref;
 	}
 	return NULL;
 }
 
-struct btrfs_inode_extref *btrfs_find_name_in_ext_backref(
+struct btrfs_inode_ref *btrfs_find_name_in_backref(struct extent_buffer *leaf,
+						   int slot, const char *name,
+						   int name_len)
+{
+	struct fscrypt_name fname = {
+		.disk_name = FSTR_INIT((unsigned char *)name, name_len)
+	};
+	return __btrfs_find_name_in_backref(leaf, slot, &fname);
+}
+
+static struct btrfs_inode_extref *__btrfs_find_name_in_ext_backref(
 		struct extent_buffer *leaf, int slot, u64 ref_objectid,
-		const char *name, int name_len)
+		const struct fscrypt_name *fname)
 {
 	struct btrfs_inode_extref *extref;
 	unsigned long ptr;
@@ -60,14 +72,25 @@ struct btrfs_inode_extref *btrfs_find_name_in_ext_backref(
 		name_ptr = (unsigned long)(&extref->name);
 		ref_name_len = btrfs_inode_extref_name_len(leaf, extref);
 
-		if (ref_name_len == name_len &&
-		    btrfs_inode_extref_parent(leaf, extref) == ref_objectid &&
-		    (memcmp_extent_buffer(leaf, name, name_ptr, name_len) == 0))
+		if (btrfs_inode_extref_parent(leaf, extref) == ref_objectid &&
+		    btrfs_fscrypt_match_name(fname, leaf, name_ptr,
+					     ref_name_len))
 			return extref;
 
 		cur_offset += ref_name_len + sizeof(*extref);
 	}
 	return NULL;
+}
+
+struct btrfs_inode_extref *btrfs_find_name_in_ext_backref(
+		struct extent_buffer *leaf, int slot, u64 ref_objectid,
+		const char *name, int name_len)
+{
+	struct fscrypt_name fname = {
+		.disk_name = FSTR_INIT((unsigned char *)name, name_len)
+	};
+	return __btrfs_find_name_in_ext_backref(leaf, slot, ref_objectid,
+						&fname);
 }
 
 /* Returns NULL if no extref found */
@@ -98,23 +121,32 @@ btrfs_lookup_inode_extref(struct btrfs_trans_handle *trans,
 
 static int btrfs_del_inode_extref(struct btrfs_trans_handle *trans,
 				  struct btrfs_root *root,
-				  const char *name, int name_len,
-				  u64 inode_objectid, u64 ref_objectid,
-				  u64 *index)
+				  const struct fscrypt_name *fname,
+				  int name_len, u64 inode_objectid,
+				  u64 ref_objectid, u64 *index)
 {
 	struct btrfs_path *path;
 	struct btrfs_key key;
 	struct btrfs_inode_extref *extref;
 	struct extent_buffer *leaf;
 	int ret;
-	int del_len = name_len + sizeof(*extref);
+	int del_len;
 	unsigned long ptr;
 	unsigned long item_start;
 	u32 item_size;
 
 	key.objectid = inode_objectid;
 	key.type = BTRFS_INODE_EXTREF_KEY;
-	key.offset = btrfs_extref_hash(ref_objectid, name, name_len);
+	if (fname_name(fname)) {
+		key.offset = btrfs_extref_hash(ref_objectid, fname_name(fname),
+					       fname_len(fname));
+	} else {
+		/* TODO: explain this magic. */
+		key.offset = (__crc32c_le_combine(ref_objectid,
+						  fname->hash,
+						  name_len) ^
+			     __crc32c_le_shift(~1, name_len));
+	}
 
 	path = btrfs_alloc_path();
 	if (!path)
@@ -131,8 +163,9 @@ static int btrfs_del_inode_extref(struct btrfs_trans_handle *trans,
 	 * This should always succeed so error here will make the FS
 	 * readonly.
 	 */
-	extref = btrfs_find_name_in_ext_backref(path->nodes[0], path->slots[0],
-						ref_objectid, name, name_len);
+	extref = __btrfs_find_name_in_ext_backref(path->nodes[0],
+						  path->slots[0], ref_objectid,
+						  fname);
 	if (!extref) {
 		btrfs_handle_fs_error(root->fs_info, -ENOENT, NULL);
 		ret = -EROFS;
@@ -144,6 +177,7 @@ static int btrfs_del_inode_extref(struct btrfs_trans_handle *trans,
 	if (index)
 		*index = btrfs_inode_extref_index(leaf, extref);
 
+	del_len = name_len + sizeof(*extref);
 	if (del_len == item_size) {
 		/*
 		 * Common case only one ref in the item, remove the
@@ -167,10 +201,10 @@ out:
 	return ret;
 }
 
-int btrfs_del_inode_ref(struct btrfs_trans_handle *trans,
-			struct btrfs_root *root,
-			const char *name, int name_len,
-			u64 inode_objectid, u64 ref_objectid, u64 *index)
+int __btrfs_del_inode_ref(struct btrfs_trans_handle *trans,
+			  struct btrfs_root *root,
+			  const struct fscrypt_name *fname, int name_len,
+			  u64 inode_objectid, u64 ref_objectid, u64 *index)
 {
 	struct btrfs_path *path;
 	struct btrfs_key key;
@@ -201,8 +235,8 @@ int btrfs_del_inode_ref(struct btrfs_trans_handle *trans,
 		goto out;
 	}
 
-	ref = btrfs_find_name_in_backref(path->nodes[0], path->slots[0], name,
-					 name_len);
+	ref = __btrfs_find_name_in_backref(path->nodes[0], path->slots[0],
+					   fname);
 	if (!ref) {
 		ret = -ENOENT;
 		search_ext_refs = 1;
@@ -233,11 +267,24 @@ out:
 		 * name in our ref array. Find and remove the extended
 		 * inode ref then.
 		 */
-		return btrfs_del_inode_extref(trans, root, name, name_len,
-					      inode_objectid, ref_objectid, index);
+		return btrfs_del_inode_extref(trans, root, fname, name_len,
+					      inode_objectid, ref_objectid,
+					      index);
 	}
 
 	return ret;
+}
+
+int btrfs_del_inode_ref(struct btrfs_trans_handle *trans,
+			struct btrfs_root *root,
+			const char *name, int name_len,
+			u64 inode_objectid, u64 ref_objectid, u64 *index)
+{
+	struct fscrypt_name fname = {
+		.disk_name = FSTR_INIT((unsigned char *)name, name_len)
+	};
+	return __btrfs_del_inode_ref(trans, root, &fname, name_len,
+				     inode_objectid, ref_objectid, index);
 }
 
 /*

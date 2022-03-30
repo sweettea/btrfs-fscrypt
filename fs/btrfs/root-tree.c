@@ -327,8 +327,8 @@ out:
 }
 
 int btrfs_del_root_ref(struct btrfs_trans_handle *trans, u64 root_id,
-		       u64 ref_id, u64 dirid, u64 *sequence, const char *name,
-		       int name_len)
+		       u64 ref_id, u64 dirid, u64 *sequence,
+		       const struct fscrypt_name *fname)
 
 {
 	struct btrfs_root *tree_root = trans->fs_info->tree_root;
@@ -337,6 +337,7 @@ int btrfs_del_root_ref(struct btrfs_trans_handle *trans, u64 root_id,
 	struct extent_buffer *leaf;
 	struct btrfs_key key;
 	unsigned long ptr;
+	u32 name_len;
 	int err = 0;
 	int ret;
 
@@ -356,9 +357,9 @@ again:
 		ref = btrfs_item_ptr(leaf, path->slots[0],
 				     struct btrfs_root_ref);
 		ptr = (unsigned long)(ref + 1);
+		name_len = btrfs_root_ref_name_len(leaf, ref);
 		if ((btrfs_root_ref_dirid(leaf, ref) != dirid) ||
-		    (btrfs_root_ref_name_len(leaf, ref) != name_len) ||
-		    memcmp_extent_buffer(leaf, name, ptr, name_len)) {
+		    !btrfs_fscrypt_match_name(fname, leaf, ptr, name_len)) {
 			err = -ENOENT;
 			goto out;
 		}

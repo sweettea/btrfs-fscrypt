@@ -103,9 +103,10 @@ int btrfs_insert_xattr_item(struct btrfs_trans_handle *trans,
  * to use for the second index (if one is created).
  * Will return 0 or -ENOMEM
  */
-int btrfs_insert_dir_item(struct btrfs_trans_handle *trans, const char *name,
-			  int name_len, struct btrfs_inode *dir,
-			  struct btrfs_key *location, u8 type, u64 index)
+int btrfs_insert_dir_item(struct btrfs_trans_handle *trans,
+			  const struct fscrypt_name *fname,
+			  struct btrfs_inode *dir, struct btrfs_key *location,
+			  u8 type, u64 index)
 {
 	int ret = 0;
 	int ret2 = 0;
@@ -120,7 +121,7 @@ int btrfs_insert_dir_item(struct btrfs_trans_handle *trans, const char *name,
 
 	key.objectid = btrfs_ino(dir);
 	key.type = BTRFS_DIR_ITEM_KEY;
-	key.offset = btrfs_name_hash(name, name_len);
+	key.offset = btrfs_name_hash(fname_name(fname), fname_len(fname));
 
 	path = btrfs_alloc_path();
 	if (!path)
@@ -128,9 +129,9 @@ int btrfs_insert_dir_item(struct btrfs_trans_handle *trans, const char *name,
 
 	btrfs_cpu_key_to_disk(&disk_key, location);
 
-	data_size = sizeof(*dir_item) + name_len;
+	data_size = sizeof(*dir_item) + fname_len(fname);
 	dir_item = insert_with_overflow(trans, root, path, &key, data_size,
-					name, name_len);
+					fname_name(fname), fname_len(fname));
 	if (IS_ERR(dir_item)) {
 		ret = PTR_ERR(dir_item);
 		if (ret == -EEXIST)
@@ -142,11 +143,12 @@ int btrfs_insert_dir_item(struct btrfs_trans_handle *trans, const char *name,
 	btrfs_set_dir_item_key(leaf, dir_item, &disk_key);
 	btrfs_set_dir_flags(leaf, dir_item, type);
 	btrfs_set_dir_data_len(leaf, dir_item, 0);
-	btrfs_set_dir_name_len(leaf, dir_item, name_len);
+	btrfs_set_dir_name_len(leaf, dir_item, fname_len(fname));
 	btrfs_set_dir_transid(leaf, dir_item, trans->transid);
 	name_ptr = (unsigned long)(dir_item + 1);
 
-	write_extent_buffer(leaf, name, name_ptr, name_len);
+	write_extent_buffer(leaf, fname_name(fname), name_ptr,
+			    fname_len(fname));
 	btrfs_mark_buffer_dirty(leaf);
 
 second_insert:
@@ -157,8 +159,8 @@ second_insert:
 	}
 	btrfs_release_path(path);
 
-	ret2 = btrfs_insert_delayed_dir_index(trans, name, name_len, dir,
-					      &disk_key, type, index);
+	ret2 = btrfs_insert_delayed_dir_index(trans, fname, dir, &disk_key,
+					      type, index);
 out_free:
 	btrfs_free_path(path);
 	if (ret)
@@ -188,6 +190,68 @@ static struct btrfs_dir_item *btrfs_lookup_match_dir(
 }
 
 /*
+ * TODO: we should rename:
+ * btrfs_match_dir_item_name -> btrfs_match_dir_item_disk_name
+ * __btrfs_match_dir_item_name -> btrfs_match_dir_item_name
+ * btrfs_lookup_dir_item -> btrfs_lookup_dir_item_disk_name
+ * __btrfs_lookup_dir_item -> btrfs_lookup_dir_item
+ */
+
+
+/*
+ * helper function to look at the directory item pointed to by 'path'
+ * this walks through all the entries in a dir item and finds one
+ * for a specific name.
+ */
+static struct btrfs_dir_item *
+__btrfs_match_dir_item_name(struct btrfs_fs_info *fs_info,
+			    struct btrfs_path *path,
+			    const struct fscrypt_name *fname, int *name_len)
+{
+	struct btrfs_dir_item *dir_item;
+	u32 total_len;
+	u32 cur = 0;
+	u32 this_len;
+	struct extent_buffer *leaf;
+
+	leaf = path->nodes[0];
+	dir_item = btrfs_item_ptr(leaf, path->slots[0], struct btrfs_dir_item);
+
+	total_len = btrfs_item_size(leaf, path->slots[0]);
+	while (cur < total_len) {
+		int dir_name_len = btrfs_dir_name_len(leaf, dir_item);
+
+		this_len = sizeof(*dir_item) +
+			dir_name_len +
+			btrfs_dir_data_len(leaf, dir_item);
+
+		if (btrfs_fscrypt_match_name(fname, leaf,
+					     (unsigned long)(dir_item + 1),
+					     dir_name_len)) {
+			if (name_len)
+				*name_len = dir_name_len;
+			return dir_item;
+		}
+
+		cur += this_len;
+		dir_item = (struct btrfs_dir_item *)((char *)dir_item +
+						     this_len);
+	}
+	return NULL;
+}
+
+struct btrfs_dir_item *btrfs_match_dir_item_name(struct btrfs_fs_info *fs_info,
+						 struct btrfs_path *path,
+						 const char *name,
+						 int name_len)
+{
+	struct fscrypt_name fname = {
+		.disk_name = FSTR_INIT((unsigned char *)name, name_len)
+	};
+	return __btrfs_match_dir_item_name(fs_info, path, &fname, NULL);
+}
+
+/*
  * Lookup for a directory item by name.
  *
  * @trans:	The transaction handle to use. Can be NULL if @mod is 0.
@@ -203,24 +267,55 @@ static struct btrfs_dir_item *btrfs_lookup_match_dir(
  * Returns: NULL if the dir item does not exists, an error pointer if an error
  * happened, or a pointer to a dir item if a dir item exists for the given name.
  */
+struct btrfs_dir_item *__btrfs_lookup_dir_item(struct btrfs_trans_handle *trans,
+					       struct btrfs_root *root,
+					       struct btrfs_path *path, u64 dir,
+					       const struct fscrypt_name *fname,
+					       int mod, int *name_len)
+{
+	int ret;
+	struct btrfs_key key;
+	int ins_len = mod < 0 ? -1 : 0;
+	int cow = mod != 0;
+	struct fscrypt_name unencrypted_fname;
+	struct btrfs_dir_item *dir_item;
+
+again:
+	key.objectid = dir;
+	key.type = BTRFS_DIR_ITEM_KEY;
+	if (fname_name(fname)) {
+		key.offset = btrfs_name_hash(fname_name(fname),
+					     fname_len(fname));
+	} else {
+		key.offset = fname->hash | ((u64)fname->minor_hash << 32);
+	}
+
+	/*
+	 * TODO: use a7d1c5dc8632 ("btrfs: introduce btrfs_lookup_match_dir")?
+	 */
+	ret = btrfs_search_slot(trans, root, &key, path, ins_len, cow);
+	if (ret < 0)
+		return ERR_PTR(ret);
+	if (ret > 0) {
+		dir_item = NULL;
+	} else {
+		dir_item = __btrfs_match_dir_item_name(root->fs_info, path,
+						       fname, name_len);
+	}
+	return dir_item;
+}
+
 struct btrfs_dir_item *btrfs_lookup_dir_item(struct btrfs_trans_handle *trans,
 					     struct btrfs_root *root,
 					     struct btrfs_path *path, u64 dir,
 					     const char *name, int name_len,
 					     int mod)
 {
-	struct btrfs_key key;
-	struct btrfs_dir_item *di;
-
-	key.objectid = dir;
-	key.type = BTRFS_DIR_ITEM_KEY;
-	key.offset = btrfs_name_hash(name, name_len);
-
-	di = btrfs_lookup_match_dir(trans, root, path, &key, name, name_len, mod);
-	if (IS_ERR(di) && PTR_ERR(di) == -ENOENT)
-		return NULL;
-
-	return di;
+	struct fscrypt_name fname = {
+		.disk_name = FSTR_INIT((unsigned char *)name, name_len)
+	};
+	return __btrfs_lookup_dir_item(trans, root, path, dir, &fname, mod,
+				       NULL);
 }
 
 int btrfs_check_dir_item_collision(struct btrfs_root *root, u64 dir,
@@ -323,7 +418,7 @@ btrfs_lookup_dir_index_item(struct btrfs_trans_handle *trans,
 struct btrfs_dir_item *
 btrfs_search_dir_index_item(struct btrfs_root *root,
 			    struct btrfs_path *path, u64 dirid,
-			    const char *name, int name_len)
+			    const struct fscrypt_name *fname)
 {
 	struct btrfs_dir_item *di;
 	struct btrfs_key key;
@@ -337,8 +432,9 @@ btrfs_search_dir_index_item(struct btrfs_root *root,
 		if (key.objectid != dirid || key.type != BTRFS_DIR_INDEX_KEY)
 			break;
 
-		di = btrfs_match_dir_item_name(root->fs_info, path,
-					       name, name_len);
+		/* TODO: does this need fallback, too? */
+		di = __btrfs_match_dir_item_name(root->fs_info, path, fname,
+						 NULL);
 		if (di)
 			return di;
 	}
@@ -367,43 +463,6 @@ struct btrfs_dir_item *btrfs_lookup_xattr(struct btrfs_trans_handle *trans,
 		return NULL;
 
 	return di;
-}
-
-/*
- * helper function to look at the directory item pointed to by 'path'
- * this walks through all the entries in a dir item and finds one
- * for a specific name.
- */
-struct btrfs_dir_item *btrfs_match_dir_item_name(struct btrfs_fs_info *fs_info,
-						 struct btrfs_path *path,
-						 const char *name, int name_len)
-{
-	struct btrfs_dir_item *dir_item;
-	unsigned long name_ptr;
-	u32 total_len;
-	u32 cur = 0;
-	u32 this_len;
-	struct extent_buffer *leaf;
-
-	leaf = path->nodes[0];
-	dir_item = btrfs_item_ptr(leaf, path->slots[0], struct btrfs_dir_item);
-
-	total_len = btrfs_item_size(leaf, path->slots[0]);
-	while (cur < total_len) {
-		this_len = sizeof(*dir_item) +
-			btrfs_dir_name_len(leaf, dir_item) +
-			btrfs_dir_data_len(leaf, dir_item);
-		name_ptr = (unsigned long)(dir_item + 1);
-
-		if (btrfs_dir_name_len(leaf, dir_item) == name_len &&
-		    memcmp_extent_buffer(leaf, name, name_ptr, name_len) == 0)
-			return dir_item;
-
-		cur += this_len;
-		dir_item = (struct btrfs_dir_item *)((char *)dir_item +
-						     this_len);
-	}
-	return NULL;
 }
 
 /*

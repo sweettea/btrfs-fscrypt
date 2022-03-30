@@ -1342,7 +1342,7 @@ void btrfs_balance_delayed_items(struct btrfs_fs_info *fs_info)
 
 /* Will return 0 or -ENOMEM */
 int btrfs_insert_delayed_dir_index(struct btrfs_trans_handle *trans,
-				   const char *name, int name_len,
+				   const struct fscrypt_name *fname,
 				   struct btrfs_inode *dir,
 				   struct btrfs_disk_key *disk_key, u8 flags,
 				   u64 index)
@@ -1356,7 +1356,8 @@ int btrfs_insert_delayed_dir_index(struct btrfs_trans_handle *trans,
 	if (IS_ERR(delayed_node))
 		return PTR_ERR(delayed_node);
 
-	delayed_item = btrfs_alloc_delayed_item(sizeof(*dir_item) + name_len);
+	delayed_item = btrfs_alloc_delayed_item(sizeof(*dir_item) +
+						fname_len(fname));
 	if (!delayed_item) {
 		ret = -ENOMEM;
 		goto release_node;
@@ -1370,9 +1371,9 @@ int btrfs_insert_delayed_dir_index(struct btrfs_trans_handle *trans,
 	dir_item->location = *disk_key;
 	btrfs_set_stack_dir_transid(dir_item, trans->transid);
 	btrfs_set_stack_dir_data_len(dir_item, 0);
-	btrfs_set_stack_dir_name_len(dir_item, name_len);
+	btrfs_set_stack_dir_name_len(dir_item, fname_len(fname));
 	btrfs_set_stack_dir_flags(dir_item, flags);
-	memcpy((char *)(dir_item + 1), name, name_len);
+	memcpy((char *)(dir_item + 1), fname_name(fname), fname_len(fname));
 
 	ret = btrfs_delayed_item_reserve_metadata(trans, dir->root, delayed_item);
 	/*
@@ -1588,7 +1589,9 @@ int btrfs_should_delete_dir_index(struct list_head *del_list,
  * btrfs_readdir_delayed_dir_index - read dir info stored in the delayed tree
  *
  */
-int btrfs_readdir_delayed_dir_index(struct dir_context *ctx,
+int btrfs_readdir_delayed_dir_index(struct inode *inode,
+				    struct fscrypt_str *fstr,
+				    struct dir_context *ctx,
 				    struct list_head *ins_list)
 {
 	struct btrfs_dir_item *di;
@@ -1598,6 +1601,13 @@ int btrfs_readdir_delayed_dir_index(struct dir_context *ctx,
 	int name_len;
 	int over = 0;
 	unsigned char d_type;
+	u32 max_presented_len = fstr->len;
+	int ret;
+
+	/*
+	 * TODO: can we make delayed_node->mutex an rwsem and get rid of this
+	 * hack?
+	 */
 
 	if (list_empty(ins_list))
 		return 0;
@@ -1625,8 +1635,27 @@ int btrfs_readdir_delayed_dir_index(struct dir_context *ctx,
 		d_type = fs_ftype_to_dtype(btrfs_dir_flags_to_ftype(di->type));
 		btrfs_disk_key_to_cpu(&location, &di->location);
 
-		over = !dir_emit(ctx, name, name_len,
-			       location.objectid, d_type);
+		if (di->type & BTRFS_FT_FSCRYPT_NAME) {
+			struct fscrypt_str iname = FSTR_INIT(name, name_len);
+
+			/*
+			 * The hash is only used when the encryption key is not
+			 * available. But if we have delayed insertions, then we
+			 * must have the encryption key available or we wouldn't
+			 * have been able to create entries in the directory.
+			 * So, we don't calculate the hash.
+			 */
+			fstr->len = max_presented_len;
+			ret = fscrypt_fname_disk_to_usr(inode, 0, 0, &iname,
+							fstr);
+			if (ret)
+				return ret;
+			over = !dir_emit(ctx, fstr->name, fstr->len,
+					 location.objectid, d_type);
+		} else {
+			over = !dir_emit(ctx, name, name_len, location.objectid,
+					 d_type);
+		}
 
 		if (refcount_dec_and_test(&curr->refs))
 			kfree(curr);

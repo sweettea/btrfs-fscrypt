@@ -67,6 +67,10 @@ int btrfs_insert_inode_ref(struct btrfs_trans_handle *trans,
 			   struct btrfs_root *root,
 			   const char *name, int name_len,
 			   u64 inode_objectid, u64 ref_objectid, u64 index);
+int __btrfs_del_inode_ref(struct btrfs_trans_handle *trans,
+			  struct btrfs_root *root,
+			  const struct fscrypt_name *fname, int name_len,
+			  u64 inode_objectid, u64 ref_objectid, u64 *index);
 int btrfs_del_inode_ref(struct btrfs_trans_handle *trans,
 			   struct btrfs_root *root,
 			   const char *name, int name_len,
