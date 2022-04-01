@@ -308,7 +308,7 @@ static void decrypt_bh(struct work_struct *work)
 	int err;
 
 	err = fscrypt_decrypt_pagecache_blocks(bh->b_page, bh->b_size,
-					       bh_offset(bh));
+					       bh_offset(bh), NULL);
 	end_buffer_async_read(bh, err == 0);
 	kfree(ctx);
 }

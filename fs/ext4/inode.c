@@ -1117,7 +1117,8 @@ static int ext4_block_write_begin(struct page *page, loff_t pos, unsigned len,
 			int err2;
 
 			err2 = fscrypt_decrypt_pagecache_blocks(page, blocksize,
-								bh_offset(wait[i]));
+								bh_offset(wait[i]),
+								NULL);
 			if (err2) {
 				clear_buffer_uptodate(wait[i]);
 				err = err2;
@@ -3747,7 +3748,8 @@ static int __ext4_block_zero_page_range(handle_t *handle,
 			/* We expect the key to be set. */
 			BUG_ON(!fscrypt_has_encryption_key(inode));
 			err = fscrypt_decrypt_pagecache_blocks(page, blocksize,
-							       bh_offset(bh));
+							       bh_offset(bh),
+							       NULL);
 			if (err) {
 				clear_buffer_uptodate(bh);
 				goto unlock;

@@ -2427,7 +2427,7 @@ int f2fs_encrypt_one_page(struct f2fs_io_info *fio)
 
 retry_encrypt:
 	fio->encrypted_page = fscrypt_encrypt_pagecache_blocks(page,
-					PAGE_SIZE, 0, gfp_flags);
+					PAGE_SIZE, 0, NULL, gfp_flags);
 	if (IS_ERR(fio->encrypted_page)) {
 		/* flush pending IOs and wait for a while in the ENOMEM case */
 		if (PTR_ERR(fio->encrypted_page) == -ENOMEM) {

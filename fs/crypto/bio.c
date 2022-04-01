@@ -36,7 +36,7 @@ void fscrypt_decrypt_bio(struct bio *bio)
 	bio_for_each_segment_all(bv, bio, iter_all) {
 		struct page *page = bv->bv_page;
 		int ret = fscrypt_decrypt_pagecache_blocks(page, bv->bv_len,
-							   bv->bv_offset);
+							   bv->bv_offset, NULL);
 		if (ret)
 			SetPageError(page);
 	}
@@ -157,7 +157,7 @@ int fscrypt_zeroout_range(const struct inode *inode, pgoff_t lblk,
 		i = 0;
 		offset = 0;
 		do {
-			err = fscrypt_crypt_block(inode, FS_ENCRYPT, lblk,
+			err = fscrypt_crypt_block(inode, FS_ENCRYPT, lblk, NULL,
 						  ZERO_PAGE(0), pages[i],
 						  blocksize, offset, GFP_NOFS);
 			if (err)

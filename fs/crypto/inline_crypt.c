@@ -216,7 +216,7 @@ static void fscrypt_generate_dun(const struct fscrypt_info *ci, u64 lblk_num,
 	union fscrypt_iv iv;
 	int i;
 
-	fscrypt_generate_iv(&iv, lblk_num, ci);
+	fscrypt_generate_iv(&iv, lblk_num, NULL, ci);
 
 	BUILD_BUG_ON(FSCRYPT_MAX_IV_SIZE > BLK_CRYPTO_MAX_IV_SIZE);
 	memset(dun, 0, BLK_CRYPTO_MAX_IV_SIZE);

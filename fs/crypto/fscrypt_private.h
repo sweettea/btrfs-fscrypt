@@ -266,9 +266,9 @@ typedef enum {
 extern struct kmem_cache *fscrypt_info_cachep;
 int fscrypt_initialize(unsigned int cop_flags);
 int fscrypt_crypt_block(const struct inode *inode, fscrypt_direction_t rw,
-			u64 lblk_num, struct page *src_page,
-			struct page *dest_page, unsigned int len,
-			unsigned int offs, gfp_t gfp_flags);
+			u64 lblk_num, const u8 *explicit_iv,
+			struct page *src_page, struct page *dest_page,
+			unsigned int len, unsigned int offs, gfp_t gfp_flags);
 struct page *fscrypt_alloc_bounce_page(gfp_t gfp_flags);
 
 void __printf(3, 4) __cold
@@ -294,7 +294,7 @@ union fscrypt_iv {
 };
 
 void fscrypt_generate_iv(union fscrypt_iv *iv, u64 lblk_num,
-			 const struct fscrypt_info *ci);
+			 const u8 *explicit_iv, const struct fscrypt_info *ci);
 
 /* fname.c */
 int fscrypt_fname_encrypt(const struct inode *inode, const struct qstr *iname,
@@ -326,6 +326,7 @@ int fscrypt_init_hkdf(struct fscrypt_hkdf *hkdf, const u8 *master_key,
 #define HKDF_CONTEXT_DIRHASH_KEY	5 /* info=file_nonce		*/
 #define HKDF_CONTEXT_IV_INO_LBLK_32_KEY	6 /* info=mode_num||fs_uuid	*/
 #define HKDF_CONTEXT_INODE_HASH_KEY	7 /* info=<empty>		*/
+#define HKDF_CONTEXT_CONTENTS_EXPLICIT_IV_KEY 8 /* info=mode_num	*/
 
 int fscrypt_hkdf_expand(const struct fscrypt_hkdf *hkdf, u8 context,
 			const u8 *info, unsigned int infolen,
@@ -498,6 +499,7 @@ struct fscrypt_master_key {
 	struct fscrypt_prepared_key mk_direct_keys[FSCRYPT_MODE_MAX + 1];
 	struct fscrypt_prepared_key mk_iv_ino_lblk_64_keys[FSCRYPT_MODE_MAX + 1];
 	struct fscrypt_prepared_key mk_iv_ino_lblk_32_keys[FSCRYPT_MODE_MAX + 1];
+	struct fscrypt_prepared_key mk_contents_explicit_iv_keys[FSCRYPT_MODE_MAX + 1];
 
 	/* Hash key for inode numbers.  Initialized only when needed. */
 	siphash_key_t		mk_ino_hash_key;

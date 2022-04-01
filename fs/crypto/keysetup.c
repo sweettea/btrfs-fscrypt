@@ -323,6 +323,14 @@ static int fscrypt_setup_v2_file_key(struct fscrypt_info *ci,
 		 */
 		err = setup_per_mode_enc_key(ci, mk, mk->mk_direct_keys,
 					     HKDF_CONTEXT_DIRECT_KEY, false);
+	} else if ((ci->ci_policy.v2.flags &
+		    FSCRYPT_POLICY_FLAG_CONTENTS_EXPLICIT_IV) &&
+		   S_ISREG(ci->ci_inode->i_mode)) {
+		/* TODO: should we include_fs_uuid? */
+		err = setup_per_mode_enc_key(ci, mk,
+					     mk->mk_contents_explicit_iv_keys,
+					     HKDF_CONTEXT_CONTENTS_EXPLICIT_IV_KEY,
+					     false);
 	} else if (ci->ci_policy.v2.flags &
 		   FSCRYPT_POLICY_FLAG_IV_INO_LBLK_64) {
 		/*
@@ -710,6 +718,11 @@ int fscrypt_prepare_new_inode(struct inode *dir, struct inode *inode,
 
 	*encrypt_ret = true;
 
+	/*
+	 * TODO: contents with FSCRYPT_POLICY_FLAG_CONTENTS_EXPLICIT_IV don't
+	 * need the nonce (right?). Zero it instead, or don't store it in the
+	 * xattr at all?
+	 */
 	get_random_bytes(nonce, FSCRYPT_FILE_NONCE_SIZE);
 	return fscrypt_setup_encryption_info(inode, policy, nonce,
 					     IS_CASEFOLDED(dir) &&
