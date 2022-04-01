@@ -820,6 +820,10 @@ struct btrfs_file_extent_item {
 	 * but not for stat.
 	 */
 	__u8 compression;
+	/*
+	 * This field contains 4 bits of encryption type in the lower bits,
+	 * 4 bits of ivsize in the upper bits. The unencrypted value is 0.
+	 */
 	__u8 encryption;
 	__le16 other_encoding; /* spare for later use */
 
@@ -848,6 +852,11 @@ struct btrfs_file_extent_item {
 	 */
 	__le64 num_bytes;
 
+	/*
+	 * Encryption initialization vector. Only present if extent is
+	 * encrypted (stored in the encryption field).
+	 */
+	__u8 iv[0];
 } __attribute__ ((__packed__));
 
 struct btrfs_csum_item {
