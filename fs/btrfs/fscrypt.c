@@ -42,6 +42,146 @@ bool btrfs_fscrypt_match_name(const struct fscrypt_name *fname,
 	return !memcmp(digest, nokey_name->sha256, sizeof(digest));
 }
 
+/*
+ * Read inode items of the given key type and offset from the btree.
+ *
+ * @inode:      inode to read items of
+ * @key_type:   key type to read
+ * @offset:     item offset to read from
+ * @dest:       Buffer to read into. This parameter has slightly tricky
+ *              semantics.  If it is NULL, the function will not do any copying
+ *              and will just return the size of all the items up to len bytes.
+ *              If dest_page is passed, then the function will kmap_local the
+ *              page and ignore dest, but it must still be non-NULL to avoid the
+ *              counting-only behavior.
+ * @len:        length in bytes to read
+ * @dest_page:  copy into this page instead of the dest buffer
+ *
+ * Helper function to read items from the btree.  This returns the number of
+ * bytes read or < 0 for errors.  We can return short reads if the items don't
+ * exist on disk or aren't big enough to fill the desired length.  Supports
+ * reading into a provided buffer (dest) or into the page cache
+ *
+ * Returns number of bytes read or a negative error code on failure.
+ */
+static int read_key_bytes(struct btrfs_inode *inode, u8 key_type, u64 offset,
+			  char *dest, u64 len, struct page *dest_page)
+{
+	struct btrfs_path *path;
+	struct btrfs_root *root = inode->root;
+	struct extent_buffer *leaf;
+	struct btrfs_key key;
+	u64 item_end;
+	u64 copy_end;
+	int copied = 0;
+	u32 copy_offset;
+	unsigned long copy_bytes;
+	unsigned long dest_offset = 0;
+	void *data;
+	char *kaddr = dest;
+	int ret;
+
+	path = btrfs_alloc_path();
+	if (!path)
+		return -ENOMEM;
+
+	if (dest_page)
+		path->reada = READA_FORWARD;
+
+	key.objectid = btrfs_ino(inode);
+	key.type = key_type;
+	key.offset = offset;
+
+	ret = btrfs_search_slot(NULL, root, &key, path, 0, 0);
+	if (ret < 0) {
+		goto out;
+	} else if (ret > 0) {
+		ret = 0;
+		if (path->slots[0] == 0)
+			goto out;
+		path->slots[0]--;
+	}
+
+	while (len > 0) {
+		leaf = path->nodes[0];
+		btrfs_item_key_to_cpu(leaf, &key, path->slots[0]);
+
+		if (key.objectid != btrfs_ino(inode) || key.type != key_type)
+			break;
+
+		item_end = btrfs_item_size(leaf, path->slots[0]) + key.offset;
+
+		if (copied > 0) {
+			/*
+			 * Once we've copied something, we want all of the items
+			 * to be sequential
+			 */
+			if (key.offset != offset)
+				break;
+		} else {
+			/*
+			 * Our initial offset might be in the middle of an
+			 * item.  Make sure it all makes sense.
+			 */
+			if (key.offset > offset)
+				break;
+			if (item_end <= offset)
+				break;
+		}
+
+		/* desc = NULL to just sum all the item lengths */
+		if (!dest)
+			copy_end = item_end;
+		else
+			copy_end = min(offset + len, item_end);
+
+		/* Number of bytes in this item we want to copy */
+		copy_bytes = copy_end - offset;
+
+		/* Offset from the start of item for copying */
+		copy_offset = offset - key.offset;
+
+		if (dest) {
+			if (dest_page)
+				kaddr = kmap_local_page(dest_page);
+
+			data = btrfs_item_ptr(leaf, path->slots[0], void);
+			read_extent_buffer(leaf, kaddr + dest_offset,
+					   (unsigned long)data + copy_offset,
+					   copy_bytes);
+
+			if (dest_page)
+				kunmap_local(kaddr);
+		}
+
+		offset += copy_bytes;
+		dest_offset += copy_bytes;
+		len -= copy_bytes;
+		copied += copy_bytes;
+
+		path->slots[0]++;
+		if (path->slots[0] >= btrfs_header_nritems(path->nodes[0])) {
+			/*
+			 * We've reached the last slot in this leaf and we need
+			 * to go to the next leaf.
+			 */
+			ret = btrfs_next_leaf(root, path);
+			if (ret < 0) {
+				break;
+			} else if (ret > 0) {
+				ret = 0;
+				break;
+			}
+		}
+	}
+out:
+	btrfs_free_path(path);
+	if (!ret)
+		ret = copied;
+	return ret;
+}
+
+
 static int btrfs_fscrypt_get_context(struct inode *inode, void *ctx, size_t len)
 {
 	struct btrfs_root *root = BTRFS_I(inode)->root;
@@ -62,11 +202,85 @@ static int btrfs_fscrypt_get_context(struct inode *inode, void *ctx, size_t len)
 			return PTR_ERR(inode);
 		put_inode = inode;
 	}
-	ret = btrfs_getxattr(inode, BTRFS_XATTR_NAME_ENCRYPTION_CONTEXT, ctx,
-			     len);
+	ret = read_key_bytes(BTRFS_I(inode), BTRFS_FSCRYPT_CTXT_ITEM_KEY, 0, ctx,
+			     len, NULL);
 	iput(put_inode);
 	return ret;
 }
+
+/*
+ * Insert and write inode items with a given key type and offset.
+ *
+ * @inode:     inode to insert for
+ * @key_type:  key type to insert
+ * @offset:    item offset to insert at
+ * @src:       source data to write
+ * @len:       length of source data to write
+ *
+ * Write len bytes from src into items of up to 2K length.
+ * The inserted items will have key (ino, key_type, offset + off) where off is
+ * consecutively increasing from 0 up to the last item ending at offset + len.
+ *
+ * Returns 0 on success and a negative error code on failure.
+ */
+static int write_key_bytes(struct btrfs_inode *inode, u8 key_type, u64 offset,
+			   const char *src, u64 len)
+{
+	struct btrfs_trans_handle *trans;
+	struct btrfs_path *path;
+	struct btrfs_root *root = inode->root;
+	struct extent_buffer *leaf;
+	struct btrfs_key key;
+	unsigned long copy_bytes;
+	unsigned long src_offset = 0;
+	void *data;
+	int ret = 0;
+
+	path = btrfs_alloc_path();
+	if (!path)
+		return -ENOMEM;
+
+	while (len > 0) {
+		/* 1 for the new item being inserted */
+		trans = btrfs_join_transaction(root);
+		if (IS_ERR(trans)) {
+			ret = PTR_ERR(trans);
+			break;
+		}
+
+		key.objectid = btrfs_ino(inode);
+		key.type = key_type;
+		key.offset = offset;
+
+		/*
+		 * Insert 2K at a time mostly to be friendly for smaller leaf
+		 * size filesystems
+		 */
+		copy_bytes = min_t(u64, len, 2048);
+
+		ret = btrfs_insert_empty_item(trans, root, path, &key, copy_bytes);
+		if (ret) {
+			btrfs_end_transaction(trans);
+			break;
+		}
+
+		leaf = path->nodes[0];
+
+		data = btrfs_item_ptr(leaf, path->slots[0], void);
+		write_extent_buffer(leaf, src + src_offset,
+				    (unsigned long)data, copy_bytes);
+		offset += copy_bytes;
+		src_offset += copy_bytes;
+		len -= copy_bytes;
+
+		btrfs_release_path(path);
+		btrfs_end_transaction(trans);
+	}
+
+	btrfs_free_path(path);
+	return ret;
+}
+
 
 static int btrfs_fscrypt_set_context(struct inode *inode, const void *ctx,
 				     size_t len, void *fs_data)
@@ -97,17 +311,16 @@ static int btrfs_fscrypt_set_context(struct inode *inode, const void *ctx,
 		trans = fs_data;
 	} else {
 		/*
-		 * 1 for the xattr item
 		 * 1 for the inode item
 		 * 1 for the root item if the inode is a subvolume
 		 */
-		trans = btrfs_start_transaction(root, 2 + is_subvolume);
+		trans = btrfs_start_transaction(root, 1 + is_subvolume);
 		if (IS_ERR(trans))
 			return PTR_ERR(trans);
 	}
 
-	ret = btrfs_setxattr(trans, inode, BTRFS_XATTR_NAME_ENCRYPTION_CONTEXT,
-			     ctx, len, 0);
+	ret = write_key_bytes(BTRFS_I(inode), BTRFS_FSCRYPT_CTXT_ITEM_KEY,0,
+			     ctx, len);
 	if (ret)
 		goto out;
 
