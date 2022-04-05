@@ -6639,7 +6639,6 @@ int btrfs_create_new_inode(struct btrfs_trans_handle *trans,
 		btrfs_abort_transaction(trans, ret);
 		goto discard;
 	}
-
 	ret = 0;
 	goto out;
 
@@ -6670,6 +6669,7 @@ int btrfs_add_link(struct btrfs_trans_handle *trans,
 	struct btrfs_root *root = parent_inode->root;
 	u64 ino = btrfs_ino(inode);
 	u64 parent_ino = btrfs_ino(parent_inode);
+	struct qstr qstr = FSTR_TO_QSTR(&fname->disk_name);
 
 	if (WARN_ON_ONCE(!fname_name(fname)))
 		return -ENOKEY;
