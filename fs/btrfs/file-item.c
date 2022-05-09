@@ -1222,6 +1222,7 @@ void btrfs_extent_item_to_extent_map(struct btrfs_inode *inode,
 	em->generation = btrfs_file_extent_generation(leaf, fi);
 	if (type == BTRFS_FILE_EXTENT_REG ||
 	    type == BTRFS_FILE_EXTENT_PREALLOC) {
+		int ivsize;
 		em->start = extent_start;
 		em->len = extent_end - extent_start;
 		em->orig_start = extent_start -
@@ -1248,6 +1249,14 @@ void btrfs_extent_item_to_extent_map(struct btrfs_inode *inode,
 			if (type == BTRFS_FILE_EXTENT_PREALLOC)
 				set_bit(EXTENT_FLAG_PREALLOC, &em->flags);
 		}
+
+		ivsize = (btrfs_item_size(leaf, path->slots[0]) -
+			      sizeof(*fi));
+		ASSERT(ivsize == btrfs_file_extent_encryption_ivsize(leaf, fi));
+
+// this is where we get the em->iv, but it shouldn't be needed.
+		read_extent_buffer(leaf, em->iv, (unsigned long)fi->iv,
+				   ivsize);
 	} else if (type == BTRFS_FILE_EXTENT_INLINE) {
 		em->block_start = EXTENT_MAP_INLINE;
 		em->start = extent_start;

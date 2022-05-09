@@ -1013,7 +1013,7 @@ static int submit_one_async_extent(struct btrfs_inode *inode,
 				       ins.offset,		/* disk_num_bytes */
 				       0,			/* offset */
 				       1 << BTRFS_ORDERED_COMPRESSED,
-				       async_extent->compress_type, NULL, 0);
+				       async_extent->compress_type, NULL);
 	if (ret) {
 		btrfs_drop_extent_cache(inode, start, end, 0);
 		goto out_free_reserve;
@@ -1155,10 +1155,7 @@ static noinline int cow_file_range(struct btrfs_inode *inode,
 	unsigned clear_bits;
 	unsigned long page_ops;
 	bool extent_reserved = false;
-	const int ivsize = fscrypt_explicit_iv_size(&inode->vfs_inode);
 	int ret = 0;
-
-	ASSERT(ivsize <= sizeof_field(struct extent_map, iv));
 
 	if (btrfs_is_free_space_inode(inode)) {
 		ret = -EINVAL;
@@ -1265,14 +1262,11 @@ static noinline int cow_file_range(struct btrfs_inode *inode,
 			ret = PTR_ERR(em);
 			goto out_reserve;
 		}
-		if (ivsize)
-			get_random_bytes(em->iv, ivsize);
 
 		ret = btrfs_add_ordered_extent(inode, start, ram_size, ram_size,
 					       ins.objectid, cur_alloc_size, 0,
 					       1 << BTRFS_ORDERED_REGULAR,
-					       BTRFS_COMPRESS_NONE, em->iv,
-					       ivsize);
+					       BTRFS_COMPRESS_NONE, NULL);
 		if (ret)
 			goto out_drop_extent_cache;
 
@@ -1814,7 +1808,6 @@ static noinline int run_delalloc_nocow(struct btrfs_inode *inode,
 	struct can_nocow_file_extent_args nocow_args = { 0 };
 	u64 disk_bytenr = 0;
 	const bool force = inode->flags & BTRFS_INODE_NODATACOW;
-	const int ivsize = fscrypt_explicit_iv_size(&inode->vfs_inode);
 
 	path = btrfs_alloc_path();
 	if (!path) {
@@ -1993,15 +1986,13 @@ out_check:
 				goto error;
 			}
 			free_extent_map(em);
-			if (ivsize)
-				get_random_bytes(em->iv, ivsize);
 			ret = btrfs_add_ordered_extent(inode,
 					cur_offset, nocow_args.num_bytes,
 					nocow_args.num_bytes,
 					nocow_args.disk_bytenr,
 					nocow_args.num_bytes, 0,
 					1 << BTRFS_ORDERED_PREALLOC,
-					BTRFS_COMPRESS_NONE, em->iv, ivsize);
+					BTRFS_COMPRESS_NONE, NULL);
 			if (ret) {
 				btrfs_drop_extent_cache(inode, cur_offset,
 							nocow_end, 0);
@@ -2016,7 +2007,7 @@ out_check:
 						       0,
 						       1 << BTRFS_ORDERED_NOCOW,
 						       BTRFS_COMPRESS_NONE,
-						       NULL, 0);
+						       NULL);
 			if (ret)
 				goto error;
 		}
@@ -7123,23 +7114,20 @@ next:
 	if (extent_type == BTRFS_FILE_EXTENT_REG) {
 		int ivsize = (btrfs_item_size(leaf, path->slots[0]) -
 			      sizeof(*item));
-		int expected_ivsize = 0;
+		u8 encryption = btrfs_file_extent_encryption(leaf, item);
+		u8 policy, item_ivsize;
+		btrfs_unpack_encryption(encryption, &policy, &item_ivsize);
 
-		if (btrfs_file_extent_encryption(leaf, item) ==
-		    BTRFS_ENCRYPTION_FSCRYPT) {
-			expected_ivsize =
-				fscrypt_explicit_iv_size(&inode->vfs_inode);
-			ASSERT(expected_ivsize <= sizeof(em->iv));
-		}
-		if (ivsize != expected_ivsize) {
-			btrfs_crit(fs_info,
-		"invalid encryption IV size for inode %llu, have %d expect %d",
-				   btrfs_ino(inode), ivsize, expected_ivsize);
+		if (policy == BTRFS_ENCRYPTION_FSCRYPT) {
+			int inode_ivsize = fscrypt_explicit_iv_size(&inode->vfs_inode);
+		
+			if (ivsize != inode_ivsize || ivsize != item_ivsize)
+				btrfs_crit(fs_info,
+					"invalid encryption IV size for inode %llu: itemsize %d item %d inode %d",
+				   	btrfs_ino(inode), ivsize, item_ivsize, inode_ivsize);
 			ret = -EUCLEAN;
 			goto out;
 		}
-		read_extent_buffer(leaf, em->iv, (unsigned long)item->iv,
-				   ivsize);
 		goto insert;
 	} else if (extent_type == BTRFS_FILE_EXTENT_PREALLOC) {
 		goto insert;
@@ -7370,7 +7358,7 @@ static struct extent_map *btrfs_create_dio_extent(struct btrfs_inode *inode,
 				       block_len, 0,
 				       (1 << type) |
 				       (1 << BTRFS_ORDERED_DIRECT),
-				       BTRFS_COMPRESS_NONE, NULL, 0);
+				       BTRFS_COMPRESS_NONE, NULL);
 	if (ret) {
 		if (em) {
 			free_extent_map(em);
@@ -11198,7 +11186,7 @@ ssize_t btrfs_do_encoded_write(struct kiocb *iocb, struct iov_iter *from,
 				       encoded->unencoded_offset,
 				       (1 << BTRFS_ORDERED_ENCODED) |
 				       (1 << BTRFS_ORDERED_COMPRESSED),
-				       compression, NULL, 0);
+				       compression, NULL);
 	if (ret) {
 		btrfs_drop_extent_cache(inode, start, end, 0);
 		goto out_free_reserved;
