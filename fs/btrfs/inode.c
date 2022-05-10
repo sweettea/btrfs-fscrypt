@@ -2958,7 +2958,7 @@ int btrfs_writepage_cow_fixup(struct page *page)
 static int insert_reserved_file_extent(struct btrfs_trans_handle *trans,
 				       struct btrfs_inode *inode, u64 file_pos,
 				       struct btrfs_file_extent_item *stack_fi,
-				       const u8 *iv, int ivsize,
+				       const u8 *iv,
 				       const bool update_inode_bytes,
 				       u64 qgroup_reserved)
 {
@@ -2974,6 +2974,7 @@ static int insert_reserved_file_extent(struct btrfs_trans_handle *trans,
 	u64 ram_bytes = btrfs_stack_file_extent_ram_bytes(stack_fi);
 	struct btrfs_drop_extents_args drop_args = { 0 };
 	int ret;
+	int ivsize = fscrypt_explicit_iv_size(&inode->vfs_inode);
 
 	path = btrfs_alloc_path();
 	if (!path)
@@ -3113,7 +3114,6 @@ static int insert_ordered_extent_file_extent(struct btrfs_trans_handle *trans,
 	return insert_reserved_file_extent(trans, BTRFS_I(oe->inode),
 					   oe->file_offset, &stack_fi,
 					   oe->iv,
-					   fscrypt_explicit_iv_size(oe->inode),
 					   update_inode_bytes, oe->qgroup_rsv);
 }
 
@@ -10208,7 +10208,7 @@ static struct btrfs_trans_handle *insert_prealloc_file_extent(
 
 	if (trans) {
 		ret = insert_reserved_file_extent(trans, inode, file_offset,
-						  &stack_fi, NULL, 0, true,
+						  &stack_fi, NULL, true,
 						  qgroup_released);
 		if (ret)
 			goto free_qgroup;
