@@ -3519,28 +3519,6 @@ static int submit_extent_page(unsigned int opf,
 
 	ASSERT(bio_ctrl);
 
-	/* TODO: should this be async? */
-	if ((opf & REQ_OP_MASK) == REQ_OP_WRITE &&
-	    fscrypt_inode_uses_fs_layer_crypto(&inode->vfs_inode)) {
-		// TODO: make sure that we use fscrypt_encrytp_inplace for compresed blocks.
-		gfp_t gfp_flags = GFP_NOFS;
-
-		if (bio_ctrl->bio)
-			gfp_flags = GFP_NOWAIT | __GFP_NOWARN;
-		else
-			gfp_flags = GFP_NOFS;
-		bounce_page = fscrypt_encrypt_pagecache_blocks(page, size,
-							       pg_offset, iv->iv,
-							       gfp_flags);
-		/*
-		 * TODO: other filesystems submit and retry if this fails. Also,
-		 * should this be a blk_status_t?
-		 */
-		if (IS_ERR(bounce_page))
-			return PTR_ERR(bounce_page);
-		page = bounce_page;
-	}
-
 	ASSERT(pg_offset < PAGE_SIZE && size <= PAGE_SIZE &&
 	       pg_offset + size <= PAGE_SIZE);
 
@@ -4082,8 +4060,6 @@ static noinline_for_stack int __extent_writepage_io(struct btrfs_inode *inode,
 	const unsigned int write_flags = wbc_to_write_flags(wbc);
 	bool has_error = false;
 	bool compressed;
-	struct iv iv;
-	const int ivsize = fscrypt_explicit_iv_size(&inode->vfs_inode);
 
 	ret = btrfs_writepage_cow_fixup(page);
 	if (ret) {
@@ -4157,8 +4133,32 @@ static noinline_for_stack int __extent_writepage_io(struct btrfs_inode *inode,
 		if (btrfs_use_zone_append(inode, em->block_start))
 			opf = REQ_OP_ZONE_APPEND;
 
-		btrfs_iv_add(iv.iv, em->iv->iv, ivsize,
-			     extent_offset / fs_info->sectorsize);
+		/* TODO: should this be async? */
+		if (fscrypt_inode_uses_fs_layer_crypto(&inode->vfs_inode)) {
+			const int ivsize = fscrypt_explicit_iv_size(&inode->vfs_inode);
+			struct iv iv;
+			btrfs_iv_add(iv.iv, em->iv->iv, ivsize,
+				     extent_offset / fs_info->sectorsize);
+			// TODO: make sure that we use fscrypt_encrytp_inplace for compresed blocks.
+			gfp_t gfp_flags = GFP_NOFS;
+
+			if (bio_ctrl->bio)
+				gfp_flags = GFP_NOWAIT | __GFP_NOWARN;
+			bounce_page = fscrypt_encrypt_pagecache_blocks(page, size,
+								       pg_offset, iv->iv,
+								       gfp_flags);
+			/*
+			 * TODO: other filesystems submit and retry if this fails. Also,
+			 * should this be a blk_status_t?
+			 */
+			if (IS_ERR(bounce_page)) {
+				ret = PTR_ERR(bounce_page);
+				break;
+			}
+			page = bounce_page;
+			pg_offset = 0;
+		}
+
 
 		free_extent_map(em);
 		em = NULL;
