@@ -3511,7 +3511,6 @@ static int submit_extent_page(unsigned int opf,
 			      struct iv *iv)
 {
 	int ret = 0;
-	struct page *bounce_page = NULL;
 	struct btrfs_inode *inode = BTRFS_I(page->mapping->host);
 	unsigned int cur = pg_offset;
 
@@ -4079,6 +4078,7 @@ static noinline_for_stack int __extent_writepage_io(struct btrfs_inode *inode,
 		u64 dirty_range_start = cur;
 		u64 dirty_range_end;
 		u32 iosize;
+		u64 pg_offset = cur - page_offset(page);
 
 		if (cur >= i_size) {
 			btrfs_writepage_endio_finish_ordered(inode, page, cur,
@@ -4135,15 +4135,16 @@ static noinline_for_stack int __extent_writepage_io(struct btrfs_inode *inode,
 		if (fscrypt_inode_uses_fs_layer_crypto(&inode->vfs_inode)) {
 			const int ivsize = fscrypt_explicit_iv_size(&inode->vfs_inode);
 			struct iv iv;
-			btrfs_iv_add(iv.iv, em->iv->iv, ivsize,
-				     extent_offset / fs_info->sectorsize);
+			struct page *bounce_page = NULL;
 			// TODO: make sure that we use fscrypt_encrytp_inplace for compresed blocks.
 			gfp_t gfp_flags = GFP_NOFS;
 
-			if (bio_ctrl->bio)
+			if (epd->bio_ctrl.bio)
 				gfp_flags = GFP_NOWAIT | __GFP_NOWARN;
-			bounce_page = fscrypt_encrypt_pagecache_blocks(page, size,
-								       pg_offset, iv->iv,
+			btrfs_iv_add(iv.iv, em->iv->iv, ivsize,
+				     extent_offset / fs_info->sectorsize);
+			bounce_page = fscrypt_encrypt_pagecache_blocks(page, iosize,
+								       pg_offset, iv.iv,
 								       gfp_flags);
 			/*
 			 * TODO: other filesystems submit and retry if this fails. Also,
@@ -4195,9 +4196,9 @@ static noinline_for_stack int __extent_writepage_io(struct btrfs_inode *inode,
 		ret = submit_extent_page(opf | write_flags, wbc,
 					 &epd->bio_ctrl, page,
 					 disk_bytenr, iosize,
-					 cur - page_offset(page),
+					 pg_offset,
 					 end_bio_extent_writepage,
-					 0, 0, false, &iv);
+					 0, 0, false, NULL);
 		if (ret) {
 			has_error = true;
 			if (!saved_ret)
