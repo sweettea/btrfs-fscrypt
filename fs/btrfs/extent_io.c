@@ -3137,9 +3137,10 @@ readpage_ok:
 			pgoff_t end_index = i_size >> PAGE_SHIFT;
 
 			if (fscrypt_inode_uses_fs_layer_crypto(inode)) {
+				u64 bio_offset_blocks = (bio_offset + bvec->bv_offset) / sectorsize;
 				fscrypt_decrypt_pagecache_blocks(page,
 								 bvec->bv_len,
-								 bvec->bv_offset,
+								 bio_offset_blocks,
 								 bbio->iv->iv);
 				/* TODO: check for errors */
 			}
@@ -3169,9 +3170,6 @@ readpage_ok:
 next:
 		ASSERT(bio_offset + len > bio_offset);
 		bio_offset += len;
-		btrfs_iv_add(bbio->iv->iv, bbio->iv->iv,
-			     fscrypt_explicit_iv_size(inode),
-			     PAGE_SIZE / sectorsize);
 	}
 	/* Release the last extent */
 	endio_readpage_release_extent(&processed, NULL, 0, 0, false);
