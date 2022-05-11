@@ -4,6 +4,7 @@
 #include <linux/slab.h>
 #include <linux/spinlock.h>
 #include "ctree.h"
+#include "fscrypt.h"
 #include "volumes.h"
 #include "extent_map.h"
 #include "compression.h"
@@ -79,7 +80,7 @@ void free_extent_map(struct extent_map *em)
 		WARN_ON(!list_empty(&em->list));
 		if (test_bit(EXTENT_FLAG_FS_MAPPING, &em->flags))
 			kfree(em->map_lookup);
-		kfree(em->iv);
+		put_iv(em->iv);
 		kmem_cache_free(extent_map_cache, em);
 	}
 }

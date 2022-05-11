@@ -7128,7 +7128,7 @@ next:
 				   	btrfs_ino(inode), ivsize, item_ivsize, inode_ivsize);
 				ret = -EUCLEAN;
 			}
-			em->iv = kzalloc(sizeof(*em->iv), GFP_NOFS);
+			em->iv = alloc_iv();
 			if (!em->iv)
 				ret = -ENOMEM;
 			goto out;
