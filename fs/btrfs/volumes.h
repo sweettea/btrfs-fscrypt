@@ -371,8 +371,7 @@ struct btrfs_bio {
 	struct btrfs_device *device;
 	u8 *csum;
 	u8 csum_inline[BTRFS_BIO_INLINE_CSUM_SIZE];
-	/* TODO: see extent_map::iv */
-	u8 iv[32];
+	struct iv *iv;
 	struct bvec_iter iter;
 
 	/*

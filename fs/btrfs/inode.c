@@ -6992,6 +6992,7 @@ struct extent_map *btrfs_get_extent(struct btrfs_inode *inode,
 	struct extent_map *em = NULL;
 	struct extent_map_tree *em_tree = &inode->extent_tree;
 	struct extent_io_tree *io_tree = &inode->io_tree;
+	int expected_ivsize = fscrypt_explicit_iv_size(&inode->vfs_inode);
 
 	read_lock(&em_tree->lock);
 	em = lookup_extent_mapping(em_tree, start, len);
@@ -7121,11 +7122,15 @@ next:
 		if (policy == BTRFS_ENCRYPTION_FSCRYPT) {
 			int inode_ivsize = fscrypt_explicit_iv_size(&inode->vfs_inode);
 		
-			if (ivsize != inode_ivsize || ivsize != item_ivsize)
+			if (ivsize != inode_ivsize || ivsize != item_ivsize) {
 				btrfs_crit(fs_info,
 					"invalid encryption IV size for inode %llu: itemsize %d item %d inode %d",
 				   	btrfs_ino(inode), ivsize, item_ivsize, inode_ivsize);
-			ret = -EUCLEAN;
+				ret = -EUCLEAN;
+			}
+			em->iv = kzalloc(sizeof(*em->iv), GFP_NOFS);
+			if (!em->iv)
+				ret = -ENOMEM;
 			goto out;
 		}
 		goto insert;

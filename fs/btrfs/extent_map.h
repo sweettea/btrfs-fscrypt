@@ -51,11 +51,7 @@ struct extent_map {
 	 */
 	u64 generation;
 	unsigned long flags;
-	/*
-	 * TODO: should either make FSCRYPT_MAX_IV_SIZE public or allocate this
-	 * separately to the actual ivsize.
-	 */
-	u8 iv[32];
+	struct iv *iv;
 	/* Used for chunk mappings, flag EXTENT_FLAG_FS_MAPPING must be set */
 	struct map_lookup *map_lookup;
 	refcount_t refs;

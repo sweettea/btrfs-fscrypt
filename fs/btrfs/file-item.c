@@ -12,6 +12,7 @@
 #include "misc.h"
 #include "ctree.h"
 #include "disk-io.h"
+#include "fscrypt.h"
 #include "transaction.h"
 #include "volumes.h"
 #include "print-tree.h"
@@ -1254,9 +1255,12 @@ void btrfs_extent_item_to_extent_map(struct btrfs_inode *inode,
 			      sizeof(*fi));
 		ASSERT(ivsize == btrfs_file_extent_encryption_ivsize(leaf, fi));
 
-// this is where we get the em->iv, but it shouldn't be needed.
-		read_extent_buffer(leaf, em->iv, (unsigned long)fi->iv,
-				   ivsize);
+		if(ivsize) {
+			ASSERT(em->iv != NULL);	
+			memcpy(em->iv->iv, fi->iv, ivsize);
+		}
+/*	 read_extent_buffer(leaf, em->iv, (unsigned long)fi->iv,
+				   ivsize);*/
 	} else if (type == BTRFS_FILE_EXTENT_INLINE) {
 		em->block_start = EXTENT_MAP_INLINE;
 		em->start = extent_start;

@@ -12,7 +12,12 @@ bool btrfs_fscrypt_match_name(const struct fscrypt_name *fname,
 
 #ifdef CONFIG_FS_ENCRYPTION
 extern const struct fscrypt_operations btrfs_fscrypt_ops;
+
 #endif
+struct iv {
+	u8 iv[32];
+};
+
 
 static inline void btrfs_unpack_encryption(u8 encryption,
 					   u8 *policy,
