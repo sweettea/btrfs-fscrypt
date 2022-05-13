@@ -3103,8 +3103,9 @@ static int insert_ordered_extent_file_extent(struct btrfs_trans_handle *trans,
 	btrfs_set_stack_file_extent_ram_bytes(&stack_fi, ram_bytes);
 	btrfs_set_stack_file_extent_compression(&stack_fi, oe->compress_type);
 	if (IS_ENCRYPTED(oe->inode)) {
-		btrfs_set_stack_file_extent_encryption(&stack_fi,
-						      BTRFS_ENCRYPTION_FSCRYPT);
+		u8 encryption = btrfs_pack_encryption(BTRFS_ENCRYPTION_FSCRYPT,
+					fscrypt_explicit_iv_size(oe->inode));
+		btrfs_set_stack_file_extent_encryption(&stack_fi, encryption);
 	}
 	/* Other encoding is reserved and always 0 */
 
@@ -10040,6 +10041,7 @@ static int btrfs_symlink(struct user_namespace *mnt_userns, struct inode *dir,
 	unsigned long ptr;
 	struct btrfs_file_extent_item *ei;
 	struct extent_buffer *leaf;
+	u8 encryption;
 
 	name_len = strlen(symname);
 	/*
@@ -10105,9 +10107,9 @@ static int btrfs_symlink(struct user_namespace *mnt_userns, struct inode *dir,
 	btrfs_set_file_extent_generation(leaf, ei, trans->transid);
 	btrfs_set_file_extent_type(leaf, ei,
 				   BTRFS_FILE_EXTENT_INLINE);
-	btrfs_set_file_extent_encryption(leaf, ei,
-					 IS_ENCRYPTED(inode) ?
-					 BTRFS_ENCRYPTION_FSCRYPT : 0);
+	encryption = btrfs_pack_encryption(IS_ENCRYPTED(inode) ?
+					   BTRFS_ENCRYPTION_FSCRYPT : 0, 0);
+	btrfs_set_file_extent_encryption(leaf, ei, encryption);
 	btrfs_set_file_extent_compression(leaf, ei, 0);
 	btrfs_set_file_extent_other_encoding(leaf, ei, 0);
 	/*

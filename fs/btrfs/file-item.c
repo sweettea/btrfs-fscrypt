@@ -1237,8 +1237,7 @@ void btrfs_extent_item_to_extent_map(struct btrfs_inode *inode,
 			em->compress_type = compress_type;
 			em->block_start = bytenr;
 			em->block_len = em->orig_block_len;
-		} else if (btrfs_file_extent_encryption(leaf, fi) ==
-			   BTRFS_ENCRYPTION_FSCRYPT) {
+		} else if (btrfs_file_extent_encryption(leaf, fi)) {
 			set_bit(EXTENT_FLAG_ENCRYPTED, &em->flags);
 			em->block_start = bytenr;
 			em->block_len = em->orig_block_len;

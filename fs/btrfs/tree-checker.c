@@ -195,6 +195,7 @@ static bool check_prev_ino(struct extent_buffer *leaf,
 		prev_key->objectid, key->objectid);
 	return false;
 }
+
 static int check_extent_data_item(struct extent_buffer *leaf,
 				  struct btrfs_key *key, int slot,
 				  struct btrfs_key *prev_key)
@@ -204,6 +205,7 @@ static int check_extent_data_item(struct extent_buffer *leaf,
 	u32 sectorsize = fs_info->sectorsize;
 	u32 item_size = btrfs_item_size(leaf, slot);
 	u64 extent_end;
+	u8 policy;
 
 	if (unlikely(!IS_ALIGNED(key->offset, sectorsize))) {
 		file_extent_err(leaf, slot,
@@ -255,12 +257,12 @@ static int check_extent_data_item(struct extent_buffer *leaf,
 			BTRFS_NR_COMPRESS_TYPES - 1);
 		return -EUCLEAN;
 	}
-	if (unlikely(btrfs_file_extent_encryption(leaf, fi) >=
-		     BTRFS_NR_ENCRYPTION_TYPES)) {
+	btrfs_unpack_encryption(btrfs_file_extent_encryption(leaf, fi),
+				&policy, NULL);
+	if (unlikely(policy >= BTRFS_NR_ENCRYPTION_TYPES)) {
 		file_extent_err(leaf, slot,
 			"invalid encryption for file extent, have %u expect range [0, %u]",
-			btrfs_file_extent_encryption(leaf, fi),
-			BTRFS_NR_ENCRYPTION_TYPES - 1);
+			policy, BTRFS_NR_ENCRYPTION_TYPES - 1);
 		return -EUCLEAN;
 	}
 	if (btrfs_file_extent_type(leaf, fi) == BTRFS_FILE_EXTENT_INLINE) {
@@ -294,8 +296,8 @@ static int check_extent_data_item(struct extent_buffer *leaf,
 	 * btrfs_get_extent() where we know the IV size. Unencrypted regular or
 	 * preallocated extents have a fixed item size.
 	 */
-	if (btrfs_file_extent_encryption(leaf, fi) ==
-	    BTRFS_ENCRYPTION_FSCRYPT) {
+	if (policy == BTRFS_ENCRYPTION_FSCRYPT) {
+		// TODO check that ivsize agrees with item_size;
 		if (unlikely(item_size < sizeof(*fi))) {
 			file_extent_err(leaf, slot,
 	"invalid item size for encrypted file extent, have %u expect >= %zu",
