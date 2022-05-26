@@ -202,6 +202,10 @@ static inline int extent_buffer_uptodate(const struct extent_buffer *eb)
 
 int memcmp_extent_buffer(const struct extent_buffer *eb, const void *ptrv,
 			 unsigned long start, unsigned long len);
+int memcmp_2_extent_buffers(const struct extent_buffer *eb1,
+			    unsigned long start1,
+			    const struct extent_buffer *eb2,
+			    unsigned long start2, unsigned long len);
 void read_extent_buffer(const struct extent_buffer *eb, void *dst,
 			unsigned long start,
 			unsigned long len);

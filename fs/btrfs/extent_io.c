@@ -6845,6 +6845,54 @@ int memcmp_extent_buffer(const struct extent_buffer *eb, const void *ptrv,
 	return ret;
 }
 
+int memcmp_2_extent_buffers(const struct extent_buffer *eb1,
+			    unsigned long start1,
+			    const struct extent_buffer *eb2,
+			    unsigned long start2, unsigned long len)
+{
+	unsigned long i1, i2;
+	size_t offset1, offset2;
+	char *kaddr1, *kaddr2;
+
+	if (check_eb_range(eb1, start1, len) ||
+	    check_eb_range(eb2, start2, len))
+		return -EINVAL;
+
+	if (len == 0)
+		return 0;
+
+	i1 = get_eb_page_index(start1);
+	offset1 = get_eb_offset_in_page(eb1, start1);
+	kaddr1 = page_address(eb1->pages[i1]);
+
+	i2 = get_eb_page_index(start2);
+	offset2 = get_eb_offset_in_page(eb2, start2);
+	kaddr2 = page_address(eb2->pages[i2]);
+
+	while (true) {
+		size_t cur;
+		int ret;
+
+		cur = min3(len, PAGE_SIZE - offset1, PAGE_SIZE - offset2);
+		ret = memcmp(kaddr1 + offset1, kaddr2 + offset2, cur);
+		if (ret || cur == len)
+			return ret;
+		len -= cur;
+		offset1 += cur;
+		if (offset1 == PAGE_SIZE) {
+			offset1 = 0;
+			i1++;
+			kaddr1 = page_address(eb1->pages[i1]);
+		}
+		offset2 += cur;
+		if (offset2 == PAGE_SIZE) {
+			offset2 = 0;
+			i2++;
+			kaddr2 = page_address(eb2->pages[i2]);
+		}
+	}
+}
+
 /*
  * Check that the extent buffer is uptodate.
  *

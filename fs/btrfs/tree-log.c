@@ -635,11 +635,13 @@ static noinline int replay_one_extent(struct btrfs_trans_handle *trans,
 	u64 start = key->offset;
 	u64 nbytes = 0;
 	struct btrfs_file_extent_item *item;
+	u32 item_size;
 	struct inode *inode = NULL;
 	unsigned long size;
 	int ret = 0;
 
 	item = btrfs_item_ptr(eb, slot, struct btrfs_file_extent_item);
+	item_size = btrfs_item_size(eb, slot);
 	found_type = btrfs_file_extent_type(eb, item);
 
 	if (found_type == BTRFS_FILE_EXTENT_REG ||
@@ -679,29 +681,18 @@ static noinline int replay_one_extent(struct btrfs_trans_handle *trans,
 
 	if (ret == 0 &&
 	    (found_type == BTRFS_FILE_EXTENT_REG ||
-	     found_type == BTRFS_FILE_EXTENT_PREALLOC)) {
-		struct btrfs_file_extent_item cmp1;
-		struct btrfs_file_extent_item cmp2;
-		struct btrfs_file_extent_item *existing;
-		struct extent_buffer *leaf;
-
-		leaf = path->nodes[0];
-		existing = btrfs_item_ptr(leaf, path->slots[0],
-					  struct btrfs_file_extent_item);
-
-		read_extent_buffer(eb, &cmp1, (unsigned long)item,
-				   sizeof(cmp1));
-		read_extent_buffer(leaf, &cmp2, (unsigned long)existing,
-				   sizeof(cmp2));
-
+	     found_type == BTRFS_FILE_EXTENT_PREALLOC) &&
+	    btrfs_item_size(path->nodes[0], path->slots[0]) == item_size &&
+	    memcmp_2_extent_buffers(eb, (unsigned long)item, path->nodes[0],
+				    btrfs_item_ptr_offset(path->nodes[0],
+							  path->slots[0]),
+				    item_size) == 0) {
 		/*
 		 * we already have a pointer to this exact extent,
 		 * we don't have to do anything
 		 */
-		if (memcmp(&cmp1, &cmp2, sizeof(cmp1)) == 0) {
-			btrfs_release_path(path);
-			goto out;
-		}
+		btrfs_release_path(path);
+		goto out;
 	}
 	btrfs_release_path(path);
 
@@ -724,13 +715,13 @@ static noinline int replay_one_extent(struct btrfs_trans_handle *trans,
 			goto update_inode;
 
 		ret = btrfs_insert_empty_item(trans, root, path, key,
-					      sizeof(*item));
+					      item_size);
 		if (ret)
 			goto out;
 		dest_offset = btrfs_item_ptr_offset(path->nodes[0],
 						    path->slots[0]);
 		copy_extent_buffer(path->nodes[0], eb, dest_offset,
-				(unsigned long)item,  sizeof(*item));
+				   (unsigned long)item, item_size);
 
 		ins.objectid = btrfs_file_extent_disk_bytenr(eb, item);
 		ins.offset = btrfs_file_extent_disk_num_bytes(eb, item);
