@@ -5,13 +5,58 @@
 #include "accessors.h"
 #include "btrfs_inode.h"
 #include "disk-io.h"
+#include "ioctl.h"
 #include "fs.h"
 #include "fscrypt.h"
 #include "ioctl.h"
 #include "messages.h"
 #include "transaction.h"
 #include "xattr.h"
-#include "fscrypt.h"
+#include "root-tree.h"
+
+/*
+ * This function is extremely similar to fscrypt_match_name() but uses an
+ * extent_buffer. Also, it edits the provided argument to populate the disk_name
+ * if we successfully match and previously were using a nokey name.
+ */
+bool btrfs_fscrypt_match_name(struct fscrypt_name *fname,
+			      struct extent_buffer *leaf, unsigned long de_name,
+			      u32 de_name_len)
+{
+	const struct fscrypt_nokey_name *nokey_name =
+		(const void *)fname->crypto_buf.name;
+	u8 digest[SHA256_DIGEST_SIZE];
+
+	if (likely(fname->disk_name.name)) {
+		if (de_name_len != fname->disk_name.len)
+			return false;
+		return !memcmp_extent_buffer(leaf, fname->disk_name.name,
+					     de_name, de_name_len);
+	}
+	if (de_name_len <= sizeof(nokey_name->bytes))
+		return false;
+	if (memcmp_extent_buffer(leaf, nokey_name->bytes, de_name,
+				 sizeof(nokey_name->bytes)))
+		return false;
+	extent_buffer_sha256(leaf, de_name + sizeof(nokey_name->bytes),
+			     de_name_len - sizeof(nokey_name->bytes), digest);
+	if (!memcmp(digest, nokey_name->sha256, sizeof(digest))) {
+		/*
+		 * For no-key names, we use this opportunity to find the disk
+		 * name, so future searches don't need to deal with nokey names
+		 * and we know what the encrypted size is.
+		 */
+		fname->disk_name.name = kmalloc(de_name_len, GFP_KERNEL | GFP_NOFS);
+		if (!fname->disk_name.name)
+			fname->disk_name.name = ERR_PTR(-ENOMEM);
+		else
+			read_extent_buffer(leaf, fname->disk_name.name,
+					   de_name, de_name_len);
+		fname->disk_name.len = de_name_len;
+		return true;
+	}
+	return false;
+}
 
 static int btrfs_fscrypt_get_context(struct inode *inode, void *ctx, size_t len)
 {
