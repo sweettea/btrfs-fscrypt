@@ -801,6 +801,7 @@ static int btrfs_remap_file_range_prep(struct file *file_in, loff_t pos_in,
 	u64 bs = BTRFS_I(inode_out)->root->fs_info->sb->s_blocksize;
 	u64 wb_len;
 	int ret;
+	bool same;
 
 	if (!(remap_flags & REMAP_FILE_DEDUP)) {
 		struct btrfs_root *root_out = BTRFS_I(inode_out)->root;
@@ -810,6 +811,15 @@ static int btrfs_remap_file_range_prep(struct file *file_in, loff_t pos_in,
 
 		ASSERT(inode_in->i_sb == inode_out->i_sb);
 	}
+
+	/*
+	 * Can only reflink encrypted files if both files are encrypted.
+	 */
+	ret = fscrypt_have_same_policy(inode_in, inode_out, &same);
+	if (ret)
+		return ret;
+	if (!same)
+		return -EINVAL;
 
 	/* Don't make the dst file partly checksummed */
 	if ((BTRFS_I(inode_in)->flags & BTRFS_INODE_NODATASUM) !=
