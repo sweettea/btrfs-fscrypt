@@ -8,6 +8,7 @@
 #include "ctree.h"
 #include "transaction.h"
 #include "disk-io.h"
+#include "fscrypt.h"
 #include "print-tree.h"
 #include "qgroup.h"
 #include "space-info.h"
@@ -352,14 +353,14 @@ again:
 	if (ret < 0)
 		goto out;
 	if (ret == 0) {
+		u32 name_len;
 		leaf = path->nodes[0];
 		ref = btrfs_item_ptr(leaf, path->slots[0],
 				     struct btrfs_root_ref);
 		ptr = (unsigned long)(ref + 1);
+		name_len = btrfs_root_ref_name_len(leaf, ref);
 		if ((btrfs_root_ref_dirid(leaf, ref) != dirid) ||
-		    (btrfs_root_ref_name_len(leaf, ref) != fname_len(fname)) ||
-		    memcmp_extent_buffer(leaf, fname_name(fname), ptr,
-					 fname_len(fname))) {
+		    !btrfs_fscrypt_match_name(fname, leaf, ptr, name_len)) {
 			err = -ENOENT;
 			goto out;
 		}

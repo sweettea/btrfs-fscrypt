@@ -7,6 +7,7 @@
 #include "ctree.h"
 #include "inode-item.h"
 #include "disk-io.h"
+#include "fscrypt.h"
 #include "transaction.h"
 #include "print-tree.h"
 
@@ -62,10 +63,9 @@ struct btrfs_inode_extref *btrfs_find_name_in_ext_backref(
 		name_ptr = (unsigned long)(&extref->name);
 		ref_name_len = btrfs_inode_extref_name_len(leaf, extref);
 
-		if (ref_name_len == fname_len(fname) &&
-		    btrfs_inode_extref_parent(leaf, extref) == ref_objectid &&
-		    (memcmp_extent_buffer(leaf, fname_name(fname), name_ptr,
-					  fname_len(fname)) == 0))
+		if (btrfs_inode_extref_parent(leaf, extref) == ref_objectid &&
+		    btrfs_fscrypt_match_name(fname, leaf, name_ptr,
+					     ref_name_len))
 			return extref;
 
 		cur_offset += ref_name_len + sizeof(*extref);
