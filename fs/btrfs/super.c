@@ -47,6 +47,8 @@
 #include "tests/btrfs-tests.h"
 #include "block-group.h"
 #include "discard.h"
+#include "fscrypt.h"
+
 #include "qgroup.h"
 #include "raid56.h"
 #define CREATE_TRACE_POINTS
@@ -1443,6 +1445,9 @@ static int btrfs_fill_super(struct super_block *sb,
 	sb->s_vop = &btrfs_verityops;
 #endif
 	sb->s_xattr = btrfs_xattr_handlers;
+#ifdef CONFIG_FS_ENCRYPTION
+	sb->s_cop = &btrfs_fscrypt_ops;
+#endif
 	sb->s_time_gran = 1;
 #ifdef CONFIG_BTRFS_FS_POSIX_ACL
 	sb->s_flags |= SB_POSIXACL;
