@@ -625,6 +625,10 @@ static bool can_cow_file_range_inline(struct btrfs_inode *inode,
 	if (offset != 0)
 		return false;
 
+	/* Encrypted extents can't go inline. */
+	if (IS_ENCRYPTED(&inode->vfs_inode))
+		return false;
+
 	/*
 	 * Due to the page size limit, for subpage we can only trigger the
 	 * writeback for the dirty sectors of page, that means data writeback
