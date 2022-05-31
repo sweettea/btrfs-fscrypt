@@ -2740,7 +2740,10 @@ static inline void btrfs_crc32c_final(u32 crc, u8 *result)
 
 static inline u64 btrfs_name_hash(struct fscrypt_name *name)
 {
-	return crc32c((u32)~1, fname_name(name), fname_len(name));
+	if (fname_name(name))
+		return crc32c((u32)~1, fname_name(name), fname_len(name));
+	else
+		return name->hash | ((u64)name->minor_hash << 32);
 }
 
 /*
@@ -2749,8 +2752,15 @@ static inline u64 btrfs_name_hash(struct fscrypt_name *name)
 static inline u64 btrfs_extref_hash(u64 parent_objectid,
 				    struct fscrypt_name *name)
 {
-	return (u64) crc32c(parent_objectid, fname_name(name),
-			    fname_len(name));
+	/* TODO: explain this magic. */
+	if (fname_name(name)) 
+		return (u64) crc32c(parent_objectid, fname_name(name),
+				    fname_len(name));
+	else
+		return (__crc32c_le_combine(parent_objectid,
+					    name->hash,
+					    fname_len(name)) ^
+			__crc32c_le_shift(~1, fname_len(name)));
 }
 
 static inline gfp_t btrfs_alloc_write_mask(struct address_space *mapping)
