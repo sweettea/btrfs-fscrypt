@@ -18,11 +18,7 @@
 #include <linux/refcount.h>
 #include "ctree.h"
 
-struct btrfs_disk_key;
-struct btrfs_fs_info;
-struct btrfs_inode;
-struct btrfs_root;
-struct btrfs_trans_handle;
+struct fscrypt_str;
 
 enum btrfs_delayed_item_type {
 	BTRFS_DELAYED_INSERTION_ITEM,
@@ -152,7 +148,9 @@ void btrfs_readdir_put_delayed_items(struct inode *inode,
 				     struct list_head *del_list);
 int btrfs_should_delete_dir_index(struct list_head *del_list,
 				  u64 index);
-int btrfs_readdir_delayed_dir_index(struct dir_context *ctx,
+int btrfs_readdir_delayed_dir_index(struct inode *inode,
+				    struct fscrypt_str *fstr,
+				    struct dir_context *ctx,
 				    struct list_head *ins_list);
 
 /* Used during directory logging. */
