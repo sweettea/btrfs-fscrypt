@@ -415,6 +415,41 @@ static int fscrypt_get_policy(struct inode *inode, union fscrypt_policy *policy)
 	return fscrypt_policy_from_context(policy, &ctx, ret);
 }
 
+/**
+ * fscrypt_have_same_policy() - check whether two inodes have the same policy
+ * @inode1: the first inode
+ * @inode2: the second inode
+ * @same_ptr: a pointer to return whether they are the same
+ *
+ * Return: 0 or an error code.
+ */
+int fscrypt_have_same_policy(struct inode *inode1, struct inode *inode2,
+			     bool *same_ptr)
+{
+	union fscrypt_policy policy1, policy2;
+	int err;
+
+	if (!IS_ENCRYPTED(inode1) && !IS_ENCRYPTED(inode2)) {
+		*same_ptr = true;
+		return 0;
+	}
+	if (!IS_ENCRYPTED(inode1) || !IS_ENCRYPTED(inode2)) {
+		*same_ptr = false;
+		return 0;
+	}
+
+	err = fscrypt_get_policy(inode1, &policy1);
+	if (err)
+		return err;
+	err = fscrypt_get_policy(inode2, &policy2);
+	if (err)
+		return err;
+
+	*same_ptr = fscrypt_policies_equal(&policy1, &policy2);
+	return 0;
+}
+EXPORT_SYMBOL(fscrypt_have_same_policy);
+
 static int set_encryption_policy(struct inode *inode,
 				 const union fscrypt_policy *policy)
 {
