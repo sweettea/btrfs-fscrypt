@@ -106,6 +106,56 @@ static bool btrfs_fscrypt_empty_dir(struct inode *inode)
 	return inode->i_size == BTRFS_EMPTY_DIR_SIZE;
 }
 
+static int btrfs_fscrypt_get_extent_context(const struct inode *inode,
+					    u64 lblk_num, void *ctx,
+					    size_t len,
+					    size_t *extent_offset,
+					    size_t *extent_length)
+{
+	u64 offset = lblk_num << inode->i_blkbits;
+	struct extent_map *em;
+	int ret;
+
+	/* Since IO must be in progress on this extent, this must succeed */
+	em = btrfs_get_extent(BTRFS_I(inode), NULL, 0, offset, PAGE_SIZE);
+	if (!em)
+		return -EINVAL;
+
+	if (em->block_start == EXTENT_MAP_HOLE) {
+		btrfs_info(BTRFS_I(inode)->root->fs_info,
+			   "extent context requested for block %llu of inode %lu without an extent",
+			   lblk_num, inode->i_ino);
+		free_extent_map(em);
+		return -ENOENT;
+	}
+
+	ret = ctx ? em->fscrypt_context.len : 0;
+
+	if (ctx)
+		memcpy(ctx, em->fscrypt_context.buffer,
+		       em->fscrypt_context.len);
+
+	if (extent_offset)
+		*extent_offset
+			 = (offset - em->start) >> inode->i_blkbits;
+
+	if (extent_length)
+		*extent_length = em->len >> inode->i_blkbits;
+
+	free_extent_map(em);
+	return ret;
+}
+
+static int btrfs_fscrypt_set_extent_context(void *extent, void *ctx,
+					    size_t len)
+{
+	struct btrfs_fscrypt_extent_context *extent_context = extent;
+
+	memcpy(extent_context->buffer, ctx, len);
+	extent_context->len = len;
+	return 0;
+}
+
 const struct fscrypt_operations btrfs_fscrypt_ops = {
 	.get_context = btrfs_fscrypt_get_context,
 	.set_context = btrfs_fscrypt_set_context,
