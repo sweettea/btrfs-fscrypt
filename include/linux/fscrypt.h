@@ -313,6 +313,8 @@ static inline struct page *fscrypt_pagecache_page(struct page *bounce_page)
 void fscrypt_free_bounce_page(struct page *bounce_page);
 
 /* policy.c */
+int fscrypt_have_same_policy(struct inode *inode1, struct inode *inode2,
+			     bool *same_ptr);
 int fscrypt_ioctl_set_policy(struct file *filp, const void __user *arg);
 int fscrypt_ioctl_get_policy(struct file *filp, void __user *arg);
 int fscrypt_ioctl_get_policy_ex(struct file *filp, void __user *arg);
@@ -490,6 +492,12 @@ static inline void fscrypt_free_bounce_page(struct page *bounce_page)
 }
 
 /* policy.c */
+static inline int fscrypt_have_same_policy(struct inode *inode1,
+					   struct inode *inode2)
+{
+	return 1;
+}
+
 static inline int fscrypt_ioctl_set_policy(struct file *filp,
 					   const void __user *arg)
 {
