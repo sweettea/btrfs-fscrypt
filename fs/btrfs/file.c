@@ -3655,6 +3655,13 @@ static int btrfs_file_open(struct inode *inode, struct file *filp)
 	int ret;
 
 	filp->f_mode |= FMODE_NOWAIT | FMODE_BUF_RASYNC;
+	/*
+	 * TODO: since we have this, do we also need a call to
+	 * fscrypt_has_permitted_context in lookup?
+	 */
+	ret = fscrypt_file_open(inode, filp);
+	if (ret)
+		return ret;
 
 	ret = fsverity_file_open(inode, filp);
 	if (ret)
