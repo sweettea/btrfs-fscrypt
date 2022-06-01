@@ -187,9 +187,21 @@ static bool btrfs_fscrypt_empty_dir(struct inode *inode)
 	return true;
 }
 
+static void btrfs_fscrypt_get_iv(u8 *iv, int ivsize, struct inode *inode,
+				 u64 lblk_num)
+{
+	/*
+	 * For encryption that doesn't involve extent data, juse use the
+	 * nonce already loaded into the iv buffer.
+	 */
+	return;
+}
+
 const struct fscrypt_operations btrfs_fscrypt_ops = {
+	.flags = FS_CFLG_ALLOW_PARTIAL,
 	.key_prefix = "btrfs:",
 	.get_context = btrfs_fscrypt_get_context,
 	.set_context = btrfs_fscrypt_set_context,
 	.empty_dir = btrfs_fscrypt_empty_dir,
+	.get_fs_defined_iv = btrfs_fscrypt_get_iv,
 };
