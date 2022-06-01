@@ -190,11 +190,28 @@ static bool btrfs_fscrypt_empty_dir(struct inode *inode)
 static void btrfs_fscrypt_get_iv(u8 *iv, int ivsize, struct inode *inode,
 				 u64 lblk_num)
 {
-	/*
-	 * For encryption that doesn't involve extent data, juse use the
-	 * nonce already loaded into the iv buffer.
-	 */
-	return;
+	u64 offset = lblk_num << inode->i_blkbits;
+	struct extent_map *em;
+
+	if (lblk_num == 0) {
+		/* Must be a filename or a symlink. Just use the nonce. */
+		return;
+	}
+
+	/* Since IO must be in progress on this extent, this must succeed */
+	em = btrfs_get_extent(BTRFS_I(inode), NULL, 0, offset, PAGE_SIZE);
+	ASSERT(!IS_ERR(em) && em);
+	if (em) {
+		__le64 *iv_64 = (__le64 *)iv;
+		memcpy(iv, em->iv, ivsize);
+		/*
+		 * Add the lblk_num to the low bits of the IV to ensure
+		 * the IV changes for every page
+		 */
+		*iv_64 = cpu_to_le64(le64_to_cpu(*iv_64) + lblk_num);
+		free_extent_map(em);
+		return;
+	}
 }
 
 const struct fscrypt_operations btrfs_fscrypt_ops = {
