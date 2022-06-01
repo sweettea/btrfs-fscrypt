@@ -120,6 +120,9 @@ int btrfs_insert_dir_item(struct btrfs_trans_handle *trans,
 	struct btrfs_disk_key disk_key;
 	u32 data_size;
 
+	if (fname->crypto_buf.name)
+		type |= BTRFS_FT_FSCRYPT_NAME;
+
 	key.objectid = btrfs_ino(dir);
 	key.type = BTRFS_DIR_ITEM_KEY;
 	key.offset = btrfs_name_hash(fname);
@@ -385,6 +388,18 @@ struct btrfs_dir_item *btrfs_match_dir_item_name(struct btrfs_fs_info *fs_info,
 	u32 cur = 0;
 	u32 this_len;
 	struct extent_buffer *leaf;
+	bool encrypted = (fname->crypto_buf.name != NULL);
+	struct fscrypt_name unencrypted_fname;
+
+	if (encrypted) {
+		unencrypted_fname = (struct fscrypt_name){
+			.usr_fname = fname->usr_fname,
+			.disk_name = {
+				.name = (unsigned char *)fname->usr_fname->name,
+				.len = fname->usr_fname->len,
+			},
+		};
+	}
 
 	leaf = path->nodes[0];
 	dir_item = btrfs_item_ptr(leaf, path->slots[0], struct btrfs_dir_item);
@@ -396,6 +411,14 @@ struct btrfs_dir_item *btrfs_match_dir_item_name(struct btrfs_fs_info *fs_info,
 			btrfs_dir_data_len(leaf, dir_item);
 
 		if (btrfs_fscrypt_match_name(fname, leaf,
+					     (unsigned long)(dir_item + 1),
+					     dir_name_len)) {
+			return dir_item;
+		}
+
+		if (encrypted && 
+		    btrfs_dir_name_len(leaf, dir_item) == fname_len(&unencrypted_fname) &&
+		    btrfs_fscrypt_match_name(&unencrypted_fname, leaf,
 					     (unsigned long)(dir_item + 1),
 					     dir_name_len)) {
 			return dir_item;
