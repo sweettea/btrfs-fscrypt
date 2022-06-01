@@ -176,11 +176,23 @@ static bool btrfs_fscrypt_empty_dir(struct inode *inode)
 static void btrfs_fscrypt_get_iv(u8 *iv, int ivsize, struct inode *inode,
 				 u64 lblk_num)
 {
+	__le64 *iv_64 = (__le64 *)iv;
+	u64 offset = lblk_num << inode->i_blkbits; 
+	struct extent_map *em = btrfs_get_extent(BTRFS_I(inode), NULL, 0, offset, PAGE_SIZE);
+	if (em) {
+		memcpy(iv, em->iv, ivsize);
+		/* 
+		 * Add the lblk_num to the low bits of the IV to ensure
+		 * the IV changes for every page
+		 */
+		*iv_64 = cpu_to_le64(le64_to_cpu(*iv_64) + lblk_num);
+		return;
+	} 
+
 	/*
 	 * For encryption that doesn't involve extent data, we use a policy
 	 * equivalent to the standard FSCRYPT_POLICY_FLAG_IV_INO_LBLK_64.
 	 */
-	__le64 *iv_64 = (__le64 *)iv;
 	lblk_num |= (u64)inode->i_ino << 32;
 	*iv_64 = cpu_to_le64(lblk_num);
 }
