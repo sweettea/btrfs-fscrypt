@@ -295,6 +295,8 @@ static int insert_inline_extent(struct btrfs_trans_handle *trans,
 	int ret;
 	size_t cur_size = size;
 	u64 i_size;
+	u8 encryption = btrfs_pack_encryption(IS_ENCRYPTED(&inode->vfs_inode) ?
+					      BTRFS_ENCRYPTION_FSCRYPT : 0, 0);
 
 	ASSERT((compressed_size > 0 && compressed_pages) ||
 	       (compressed_size == 0 && !compressed_pages));
@@ -321,7 +323,7 @@ static int insert_inline_extent(struct btrfs_trans_handle *trans,
 			    struct btrfs_file_extent_item);
 	btrfs_set_file_extent_generation(leaf, ei, trans->transid);
 	btrfs_set_file_extent_type(leaf, ei, BTRFS_FILE_EXTENT_INLINE);
-	btrfs_set_file_extent_encryption(leaf, ei, 0);
+	btrfs_set_file_extent_encryption(leaf, ei, encryption);
 	btrfs_set_file_extent_other_encoding(leaf, ei, 0);
 	btrfs_set_file_extent_ram_bytes(leaf, ei, size);
 	ptr = btrfs_file_extent_inline_start(ei);
@@ -330,16 +332,31 @@ static int insert_inline_extent(struct btrfs_trans_handle *trans,
 		struct page *cpage;
 		int i = 0;
 		while (compressed_size > 0) {
+			size_t stored_size;
 			cpage = compressed_pages[i];
 			cur_size = min_t(unsigned long, compressed_size,
 				       PAGE_SIZE);
+			stored_size = cur_size;
 
 			kaddr = kmap_atomic(cpage);
-			write_extent_buffer(leaf, kaddr, ptr, cur_size);
+			/* TODO: dec doesn't operate pagewise */
+			if (encryption) {
+				char *tmp;
+				
+				stored_size = ALIGN(stored_size, FSCRYPT_CONTENTS_ALIGNMENT);
+				tmp = kzalloc(stored_size, GFP_NOFS);
+				if (!tmp)
+					return -ENOMEM;
+				memcpy(tmp, kaddr, stored_size);
+				fscrypt_encrypt_subblock_chunk(&inode->vfs_inode,
+							       tmp, stored_size, GFP_NOFS);
+				write_extent_buffer(leaf, tmp, ptr, stored_size);
+			} else
+				write_extent_buffer(leaf, kaddr, ptr, cur_size);
 			kunmap_atomic(kaddr);
 
 			i++;
-			ptr += cur_size;
+			ptr += stored_size;
 			compressed_size -= cur_size;
 		}
 		btrfs_set_file_extent_compression(leaf, ei,
@@ -348,7 +365,19 @@ static int insert_inline_extent(struct btrfs_trans_handle *trans,
 		page = find_get_page(inode->vfs_inode.i_mapping, 0);
 		btrfs_set_file_extent_compression(leaf, ei, 0);
 		kaddr = kmap_atomic(page);
-		write_extent_buffer(leaf, kaddr, ptr, size);
+		if (encryption) {
+			char *tmp;
+			
+			size = ALIGN(size, FSCRYPT_CONTENTS_ALIGNMENT);
+			tmp = kzalloc(size, GFP_NOFS);
+			if (!tmp)
+				return -ENOMEM;
+			memcpy(tmp, kaddr, size);
+			fscrypt_encrypt_subblock_chunk(&inode->vfs_inode,
+						       tmp, size, GFP_NOFS);
+			write_extent_buffer(leaf, tmp, ptr, size);
+		} else
+			write_extent_buffer(leaf, kaddr, ptr, size);
 		kunmap_atomic(kaddr);
 		put_page(page);
 	}
@@ -408,8 +437,7 @@ static noinline int cow_file_range_inline(struct btrfs_inode *inode, u64 size,
 	 * compressed) data fits in a leaf and the configured maximum inline
 	 * size.
 	 */
-	if (IS_ENCRYPTED(&inode->vfs_inode) ||
-	    size < i_size_read(&inode->vfs_inode) ||
+	if (size < i_size_read(&inode->vfs_inode) ||
 	    size > fs_info->sectorsize ||
 	    data_len > BTRFS_MAX_INLINE_DATA_SIZE(fs_info) ||
 	    data_len > fs_info->max_inline)
@@ -6888,12 +6916,16 @@ static noinline int uncompress_inline(struct btrfs_path *path,
 	compress_type = btrfs_file_extent_compression(leaf, item);
 	max_size = btrfs_file_extent_ram_bytes(leaf, item);
 	inline_size = btrfs_file_extent_inline_item_len(leaf, path->slots[0]);
-	tmp = kmalloc(inline_size, GFP_NOFS);
+	tmp = kzalloc(inline_size, GFP_NOFS);
 	if (!tmp)
 		return -ENOMEM;
 	ptr = btrfs_file_extent_inline_start(item);
 
 	read_extent_buffer(leaf, tmp, ptr, inline_size);
+	if (btrfs_file_extent_encryption(leaf, item)) {
+		struct inode *inode = page->mapping->host;
+		fscrypt_decrypt_subblock_chunk(inode, tmp, inline_size);
+	}
 
 	max_size = min_t(unsigned long, PAGE_SIZE, max_size);
 	ret = btrfs_decompress(compress_type, tmp, page,
@@ -7125,6 +7157,10 @@ next:
 					       PAGE_SIZE - pg_offset -
 					       copy_size);
 				}
+				if (btrfs_file_extent_encryption(leaf, item))
+					fscrypt_decrypt_subblock_chunk(
+						&inode->vfs_inode,
+						map + pg_offset, copy_size);
 				kunmap_local(map);
 			}
 			flush_dcache_page(page);
