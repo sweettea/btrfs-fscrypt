@@ -120,6 +120,89 @@ void fscrypt_generate_iv(union fscrypt_iv *iv, u64 lblk_num,
 	iv->lblk_num = cpu_to_le64(lblk_num);
 }
 
+/*
+ * Encrypt or decrypt a sub-block chunk of file contents, in-place. The chunk
+ * must have size rounded up to a multiple of FS_CRYPTO_BLOCK_SIZE
+ */
+int fscrypt_crypt_subblock(const struct inode *inode, fscrypt_direction_t rw,
+			   u64 lblk_num, u8 *data, unsigned int len,
+			   gfp_t gfp_flags)
+{
+	union fscrypt_iv iv;
+	struct skcipher_request *req = NULL;
+	DECLARE_CRYPTO_WAIT(wait);
+	struct fscrypt_info *ci = inode->i_crypt_info;
+	struct crypto_skcipher *tfm = ci->ci_enc_key.tfm;
+	struct scatterlist sg;
+	int res = 0;
+
+	if (WARN_ON_ONCE(len % FSCRYPT_CONTENTS_ALIGNMENT != 0))
+		return -EINVAL;
+
+	fscrypt_generate_iv(&iv, lblk_num, ci);
+
+	req = skcipher_request_alloc(tfm, gfp_flags);
+	if (!req)
+		return -ENOMEM;
+
+	skcipher_request_set_callback(
+		req, CRYPTO_TFM_REQ_MAY_BACKLOG | CRYPTO_TFM_REQ_MAY_SLEEP,
+		crypto_req_done, &wait);
+
+	sg_init_one(&sg, data, len);
+	skcipher_request_set_crypt(req, &sg, &sg, len, &iv);
+	if (rw == FS_DECRYPT)
+		res = crypto_wait_req(crypto_skcipher_decrypt(req), &wait);
+	else
+		res = crypto_wait_req(crypto_skcipher_encrypt(req), &wait);
+	skcipher_request_free(req);
+	if (res) {
+		fscrypt_err(inode, "%scryption failed for subblock %llu: %d",
+			    (rw == FS_DECRYPT ? "De" : "En"), lblk_num, res);
+		return res;
+	}
+	return 0;
+}
+
+/**
+ * fscrypt_encrypt_subblock_chunk() - Encrypt a subblock chunk for a filesystem
+ *                                    inplace
+ * @inode:     The inode being encrypted for
+ * @data:      The data buffer to encrypt
+ * @len:       Total size of the block(s) to encrypt.  Must be a nonzero
+ *		multiple of FS_CRYPT_BLOCK_SIZE.
+ * @gfp_flags: Memory allocation flags, used for allocating the encryption
+ *              request
+ *
+ * Return: whether the encryption succeeded
+ */
+int fscrypt_encrypt_subblock_chunk(struct inode *inode,
+				   u8 *data,
+				   unsigned int len,
+				   gfp_t gfp_flags)
+{
+	return fscrypt_crypt_subblock(inode, FS_ENCRYPT, 0, data, len,
+				      gfp_flags);
+}
+
+/**
+ * fscrypt_decrypt_subblock_chunk() - Encrypt a subblock chunk for a filesystem
+ *                                    inplace
+ * @inode:     The inode being encrypted for
+ * @data:      The data buffer to encrypt
+ * @len:       Total size of the block(s) to encrypt.  Must be a nonzero
+ *		multiple of FS_CRYPT_BLOCK_SIZE.
+ *
+ * Return: whether the encryption succeeded
+ */
+int fscrypt_decrypt_subblock_chunk(struct inode *inode,
+				   u8 *data,
+				   unsigned int len)
+{
+	return fscrypt_crypt_subblock(inode, FS_DECRYPT, 0, data, len,
+				      GFP_NOFS);
+}
+
 /* Encrypt or decrypt a single filesystem block of file contents */
 int fscrypt_crypt_block(const struct inode *inode, fscrypt_direction_t rw,
 			u64 lblk_num, struct page *src_page,

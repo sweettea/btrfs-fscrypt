@@ -329,6 +329,14 @@ static inline struct page *fscrypt_pagecache_page(struct page *bounce_page)
 
 void fscrypt_free_bounce_page(struct page *bounce_page);
 
+int fscrypt_encrypt_subblock_chunk(struct inode *inode,
+				   u8 *data,
+				   unsigned int len,
+				   gfp_t gfp_flags);
+int fscrypt_decrypt_subblock_chunk(struct inode *inode,
+				   u8 *data,
+				   unsigned int len);
+
 int fscrypt_mode_ivsize(struct inode *inode);
 
 /* policy.c */
