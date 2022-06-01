@@ -4735,6 +4735,7 @@ static int log_extent_csums(struct btrfs_trans_handle *trans,
 	return ret;
 }
 
+/* TODO: this needs to log IV */
 static int log_one_extent(struct btrfs_trans_handle *trans,
 			  struct btrfs_inode *inode,
 			  const struct extent_map *em,
