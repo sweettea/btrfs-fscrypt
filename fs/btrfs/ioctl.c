@@ -658,7 +658,8 @@ static noinline int create_subvol(struct user_namespace *mnt_userns,
 				     fs_info->nodesize);
 	btrfs_set_stack_inode_mode(inode_item, S_IFDIR | 0755);
 
-	btrfs_set_root_flags(root_item, 0);
+	btrfs_set_root_flags(root_item, new_inode_args.encrypt ?
+			     BTRFS_ROOT_SUBVOL_FSCRYPT : 0);
 	btrfs_set_root_limit(root_item, 0);
 	btrfs_set_stack_inode_flags(inode_item, BTRFS_INODE_ROOT_ITEM_INIT);
 
@@ -785,6 +786,13 @@ static int create_snapshot(struct btrfs_root *root, struct inode *dir,
 		btrfs_warn(fs_info,
 			   "cannot snapshot subvolume with active swapfile");
 		return -ETXTBSY;
+	}
+
+	if ((btrfs_root_flags(&root->root_item) & BTRFS_ROOT_SUBVOL_FSCRYPT) &&
+	    !IS_ENCRYPTED(dir)) {
+		btrfs_warn(fs_info,
+			   "cannot snapshot encrypted volume to unencrypted destination");
+		return -EXDEV;
 	}
 
 	pending_snapshot = kzalloc(sizeof(*pending_snapshot), GFP_KERNEL);
