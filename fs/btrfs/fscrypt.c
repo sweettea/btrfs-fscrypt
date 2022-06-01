@@ -173,9 +173,24 @@ static bool btrfs_fscrypt_empty_dir(struct inode *inode)
 		inode->i_ino == BTRFS_FIRST_FREE_OBJECTID);
 }
 
+static void btrfs_fscrypt_get_iv(u8 *iv, int ivsize, struct inode *inode,
+				 u64 lblk_num)
+{
+	/*
+	 * For encryption that doesn't involve extent data, we use a policy
+	 * equivalent to the standard FSCRYPT_POLICY_FLAG_IV_INO_LBLK_64.
+	 */
+	__le64 *iv_64 = (__le64 *)iv;
+	lblk_num |= (u64)inode->i_ino << 32;
+	*iv_64 = cpu_to_le64(lblk_num);
+}
+
 const struct fscrypt_operations btrfs_fscrypt_ops = {
+	/* TODO: FS_CFLG_OWN_PAGES? */
+	.flags = FS_CFLG_ALLOW_PARTIAL,
 	.key_prefix = "btrfs:",
 	.get_context = btrfs_fscrypt_get_context,
 	.set_context = btrfs_fscrypt_set_context,
 	.empty_dir = btrfs_fscrypt_empty_dir,
+	.get_fs_defined_iv = btrfs_fscrypt_get_iv,
 };
