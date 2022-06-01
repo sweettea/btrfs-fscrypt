@@ -190,7 +190,38 @@ static int btrfs_fscrypt_get_extent_context(const struct inode *inode,
 					    size_t *extent_offset,
 					    size_t *extent_length)
 {
-	return len;
+	u64 offset = lblk_num << inode->i_blkbits;
+	struct extent_map *em;
+	int ret;
+
+	/* Since IO must be in progress on this extent, this must succeed */
+	em = btrfs_get_extent(BTRFS_I(inode), NULL, 0, offset, PAGE_SIZE);
+	if (!em)
+		return -EINVAL;
+
+	if (em->block_start == EXTENT_MAP_HOLE) {
+		btrfs_info(BTRFS_I(inode)->root->fs_info,
+			   "extent context requested for block %llu of inode %lu without an extent",
+			   lblk_num, inode->i_ino);
+		free_extent_map(em);
+		return -ENOENT;
+	}
+
+	ret = ctx ? em->fscrypt_context.len : 0;
+
+	if (ctx)
+		memcpy(ctx, em->fscrypt_context.buffer,
+		       em->fscrypt_context.len);
+
+	if (extent_offset)
+		*extent_offset
+			 = (offset - em->start) >> inode->i_blkbits;
+
+	if (extent_length)
+		*extent_length = em->len >> inode->i_blkbits;
+
+	free_extent_map(em);
+	return ret;
 }
 
 static int btrfs_fscrypt_set_extent_context(void *extent, void *ctx,
