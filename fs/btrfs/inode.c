@@ -6178,6 +6178,33 @@ int btrfs_new_inode_prepare(struct btrfs_new_inode_args *args,
 	struct inode *inode = args->inode;
 	int ret;
 
+	if (fscrypt_is_nokey_name(args->dentry))
+		return -ENOKEY;
+
+	if (IS_ENCRYPTED(dir) &&
+	    !(BTRFS_I(dir)->flags & BTRFS_INODE_FSCRYPT_CONTEXT)) {
+		struct inode *root_inode;
+		bool encrypt;
+
+		root_inode = btrfs_iget(inode->i_sb, BTRFS_FIRST_FREE_OBJECTID,
+					BTRFS_I(dir)->root);
+		if (IS_ERR(root_inode))
+			return PTR_ERR(root_inode);
+		/*
+		 * TODO: we should do something based on set_encryption_policy
+		 * instead of this hack.
+		 */
+		ret = fscrypt_prepare_new_inode(root_inode, dir, &encrypt);
+		if (!ret) {
+			ret = fscrypt_set_context(dir, NULL);
+			if (ret)
+				fscrypt_put_encryption_info(dir); /* TODO: racy? */
+		}
+		iput(root_inode);
+		if (ret)
+			return ret;
+	}
+
 	ret = posix_acl_create(dir, &inode->i_mode, &args->default_acl, &args->acl);
 	if (ret)
 		return ret;
@@ -6211,6 +6238,8 @@ int btrfs_new_inode_prepare(struct btrfs_new_inode_args *args,
 	if (dir->i_security)
 		(*trans_num_items)++;
 #endif
+	if (args->encrypt)
+		(*trans_num_items)++; /* 1 to add fscrypt item */
 	if (args->orphan) {
 		/* 1 to add orphan item */
 		(*trans_num_items)++;
@@ -6459,6 +6488,14 @@ int btrfs_create_new_inode(struct btrfs_trans_handle *trans,
 	 */
 	if (!args->subvol) {
 		ret = btrfs_init_inode_security(trans, args);
+		if (ret) {
+			btrfs_abort_transaction(trans, ret);
+			goto discard;
+		}
+	}
+
+	if (args->encrypt) {
+		ret = fscrypt_set_context(inode, trans);
 		if (ret) {
 			btrfs_abort_transaction(trans, ret);
 			goto discard;
@@ -8927,6 +8964,7 @@ void btrfs_test_destroy_inode(struct inode *inode)
 
 void btrfs_free_inode(struct inode *inode)
 {
+	fscrypt_free_inode(inode);
 	kmem_cache_free(btrfs_inode_cachep, BTRFS_I(inode));
 }
 
@@ -8978,6 +9016,7 @@ void btrfs_destroy_inode(struct inode *vfs_inode)
 
 int btrfs_drop_inode(struct inode *inode)
 {
+	int ret;	
 	struct btrfs_root *root = BTRFS_I(inode)->root;
 
 	if (root == NULL)
@@ -8986,8 +9025,11 @@ int btrfs_drop_inode(struct inode *inode)
 	/* the snap/subvol tree is on deleting */
 	if (btrfs_root_refs(&root->root_item) == 0)
 		return 1;
-	else
-		return generic_drop_inode(inode);
+	
+	ret = generic_drop_inode(inode);
+	if (ret)
+		return ret;
+	return fscrypt_drop_inode(inode);
 }
 
 static void init_once(void *foo)

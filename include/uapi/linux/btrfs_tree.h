@@ -144,6 +144,8 @@
 #define BTRFS_VERITY_DESC_ITEM_KEY	36
 #define BTRFS_VERITY_MERKLE_ITEM_KEY	37
 
+#define BTRFS_FSCRYPT_CTXT_ITEM_KEY	41
+
 #define BTRFS_ORPHAN_ITEM_KEY		48
 /* reserve 2-15 close to the inode for later flexibility */
 
@@ -788,6 +790,12 @@ enum {
 	BTRFS_FILE_EXTENT_REG      = 1,
 	BTRFS_FILE_EXTENT_PREALLOC = 2,
 	BTRFS_NR_FILE_EXTENT_TYPES = 3,
+};
+
+enum {
+	BTRFS_ENCRYPTION_NONE,
+	BTRFS_ENCRYPTION_FSCRYPT,
+	BTRFS_NR_ENCRYPTION_TYPES,
 };
 
 struct btrfs_file_extent_item {

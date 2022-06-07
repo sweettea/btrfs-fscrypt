@@ -10,6 +10,7 @@ bool btrfs_fscrypt_match_name(const struct fscrypt_name *fname,
 			      struct extent_buffer *leaf,
 			      unsigned long de_name, u32 de_name_len);
 
+extern const struct fscrypt_operations btrfs_fscrypt_ops;
 #else
 static bool btrfs_fscrypt_match_name(const struct fscrypt_name *fname,
 				     struct extent_buffer *leaf,
