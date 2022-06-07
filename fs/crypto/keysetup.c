@@ -634,7 +634,7 @@ int fscrypt_get_encryption_info(struct inode *inode, bool allow_unsupported)
 		if (allow_unsupported)
 			return 0;
 		fscrypt_warn(inode,
-			     "Unrecognized or corrupt encryption context");
+			     "Unrecognized or corrupt encryption context for inode %lu", inode->i_ino);
 		return res;
 	}
 
