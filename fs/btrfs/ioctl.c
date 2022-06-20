@@ -941,7 +941,7 @@ static inline int btrfs_may_create(struct user_namespace *mnt_userns,
  */
 static noinline int btrfs_mksubvol(const struct path *parent,
 				   struct user_namespace *mnt_userns,
-				   const char *name, int namelen,
+				   struct fscrypt_name *fname,
 				   struct btrfs_root *snap_src,
 				   bool readonly,
 				   struct btrfs_qgroup_inherit *inherit)
@@ -955,7 +955,8 @@ static noinline int btrfs_mksubvol(const struct path *parent,
 	if (error == -EINTR)
 		return error;
 
-	dentry = lookup_one(mnt_userns, name, parent->dentry, namelen);
+	dentry = lookup_one(mnt_userns, fname_name(fname), parent->dentry,
+			    fname_len(fname));
 	error = PTR_ERR(dentry);
 	if (IS_ERR(dentry))
 		goto out_unlock;
@@ -969,8 +970,7 @@ static noinline int btrfs_mksubvol(const struct path *parent,
 	 * check for them now when we can safely fail
 	 */
 	error = btrfs_check_dir_item_collision(BTRFS_I(dir)->root,
-					       dir->i_ino, name,
-					       namelen);
+					       dir->i_ino, fname);
 	if (error)
 		goto out_dput;
 
@@ -997,7 +997,7 @@ out_unlock:
 
 static noinline int btrfs_mksnapshot(const struct path *parent,
 				   struct user_namespace *mnt_userns,
-				   const char *name, int namelen,
+				   struct fscrypt_name *fname,
 				   struct btrfs_root *root,
 				   bool readonly,
 				   struct btrfs_qgroup_inherit *inherit)
@@ -1026,7 +1026,7 @@ static noinline int btrfs_mksnapshot(const struct path *parent,
 
 	btrfs_wait_ordered_extents(root, U64_MAX, 0, (u64)-1);
 
-	ret = btrfs_mksubvol(parent, mnt_userns, name, namelen,
+	ret = btrfs_mksubvol(parent, mnt_userns, fname,
 			     root, readonly, inherit);
 out:
 	if (snapshot_force_cow)
@@ -2138,6 +2138,7 @@ static noinline int __btrfs_ioctl_snap_create(struct file *file,
 {
 	int namelen;
 	int ret = 0;
+	struct fscrypt_name fname;
 
 	if (!S_ISDIR(file_inode(file)->i_mode))
 		return -ENOTDIR;
@@ -2158,9 +2159,12 @@ static noinline int __btrfs_ioctl_snap_create(struct file *file,
 		goto out_drop_write;
 	}
 
+	fname = (struct fscrypt_name) {
+		.disk_name = FSTR_INIT((char *) name, namelen)
+	};
 	if (subvol) {
-		ret = btrfs_mksubvol(&file->f_path, mnt_userns, name,
-				     namelen, NULL, readonly, inherit);
+		ret = btrfs_mksubvol(&file->f_path, mnt_userns, &fname,
+				     NULL, readonly, inherit);
 	} else {
 		struct fd src = fdget(fd);
 		struct inode *src_inode;
@@ -2182,8 +2186,7 @@ static noinline int __btrfs_ioctl_snap_create(struct file *file,
 			ret = -EPERM;
 		} else {
 			ret = btrfs_mksnapshot(&file->f_path, mnt_userns,
-					       name, namelen,
-					       BTRFS_I(src_inode)->root,
+					       &fname, BTRFS_I(src_inode)->root,
 					       readonly, inherit);
 		}
 		fdput(src);
@@ -3777,6 +3780,10 @@ static long btrfs_ioctl_default_subvol(struct file *file, void __user *argp)
 	u64 objectid = 0;
 	u64 dir_id;
 	int ret;
+	struct fscrypt_name fname = {
+		.disk_name = FSTR_INIT("default", 7)
+	};
+
 
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
@@ -3817,7 +3824,7 @@ static long btrfs_ioctl_default_subvol(struct file *file, void __user *argp)
 
 	dir_id = btrfs_super_root_dir(fs_info->super_copy);
 	di = btrfs_lookup_dir_item(trans, fs_info->tree_root, path,
-				   dir_id, "default", 7, 1);
+				   dir_id, &fname, 1);
 	if (IS_ERR_OR_NULL(di)) {
 		btrfs_release_path(path);
 		btrfs_end_transaction(trans);

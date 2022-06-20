@@ -1390,6 +1390,9 @@ static int get_default_subvol_objectid(struct btrfs_fs_info *fs_info, u64 *objec
 	struct btrfs_path *path;
 	struct btrfs_key location;
 	u64 dir_id;
+	struct fscrypt_name fname = {
+		.disk_name = FSTR_INIT("default", 7),
+	};
 
 	path = btrfs_alloc_path();
 	if (!path)
@@ -1401,7 +1404,7 @@ static int get_default_subvol_objectid(struct btrfs_fs_info *fs_info, u64 *objec
 	 * to mount.
 	 */
 	dir_id = btrfs_super_root_dir(fs_info->super_copy);
-	di = btrfs_lookup_dir_item(NULL, root, path, dir_id, "default", 7, 0);
+	di = btrfs_lookup_dir_item(NULL, root, path, dir_id, &fname, 0);
 	if (IS_ERR(di)) {
 		btrfs_free_path(path);
 		return PTR_ERR(di);

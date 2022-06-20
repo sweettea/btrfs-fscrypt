@@ -21,7 +21,7 @@
 #include "locking.h"
 
 int btrfs_getxattr(struct inode *inode, const char *name,
-				void *buffer, size_t size)
+		   void *buffer, size_t size)
 {
 	struct btrfs_dir_item *di;
 	struct btrfs_root *root = BTRFS_I(inode)->root;
@@ -29,6 +29,9 @@ int btrfs_getxattr(struct inode *inode, const char *name,
 	struct extent_buffer *leaf;
 	int ret = 0;
 	unsigned long data_ptr;
+	struct fscrypt_name fname = {
+		.disk_name = FSTR_INIT((char *) name, strlen(name))
+	};
 
 	path = btrfs_alloc_path();
 	if (!path)
@@ -36,7 +39,7 @@ int btrfs_getxattr(struct inode *inode, const char *name,
 
 	/* lookup the xattr by name */
 	di = btrfs_lookup_xattr(NULL, root, path, btrfs_ino(BTRFS_I(inode)),
-			name, strlen(name), 0);
+				&fname, 0);
 	if (!di) {
 		ret = -ENODATA;
 		goto out;
@@ -85,6 +88,10 @@ int btrfs_setxattr(struct btrfs_trans_handle *trans, struct inode *inode,
 	struct btrfs_path *path;
 	size_t name_len = strlen(name);
 	int ret = 0;
+	struct fscrypt_name fname = {
+		.disk_name = FSTR_INIT((char *) name, name_len)
+	};
+
 
 	ASSERT(trans);
 
@@ -98,7 +105,7 @@ int btrfs_setxattr(struct btrfs_trans_handle *trans, struct inode *inode,
 
 	if (!value) {
 		di = btrfs_lookup_xattr(trans, root, path,
-				btrfs_ino(BTRFS_I(inode)), name, name_len, -1);
+					btrfs_ino(BTRFS_I(inode)), &fname, -1);
 		if (!di && (flags & XATTR_REPLACE))
 			ret = -ENODATA;
 		else if (IS_ERR(di))
@@ -118,7 +125,7 @@ int btrfs_setxattr(struct btrfs_trans_handle *trans, struct inode *inode,
 	if (flags & XATTR_REPLACE) {
 		ASSERT(inode_is_locked(inode));
 		di = btrfs_lookup_xattr(NULL, root, path,
-				btrfs_ino(BTRFS_I(inode)), name, name_len, 0);
+					btrfs_ino(BTRFS_I(inode)), &fname, 0);
 		if (!di)
 			ret = -ENODATA;
 		else if (IS_ERR(di))
@@ -130,7 +137,7 @@ int btrfs_setxattr(struct btrfs_trans_handle *trans, struct inode *inode,
 	}
 
 	ret = btrfs_insert_xattr_item(trans, root, path, btrfs_ino(BTRFS_I(inode)),
-				      name, name_len, value, size);
+				      &fname, value, size);
 	if (ret == -EOVERFLOW) {
 		/*
 		 * We have an existing item in a leaf, split_leaf couldn't
@@ -139,14 +146,14 @@ int btrfs_setxattr(struct btrfs_trans_handle *trans, struct inode *inode,
 		 */
 		ret = 0;
 		btrfs_assert_tree_write_locked(path->nodes[0]);
-		di = btrfs_match_dir_item_name(fs_info, path, name, name_len);
+		di = btrfs_match_dir_item_name(fs_info, path, &fname);
 		if (!di && !(flags & XATTR_REPLACE)) {
 			ret = -ENOSPC;
 			goto out;
 		}
 	} else if (ret == -EEXIST) {
 		ret = 0;
-		di = btrfs_match_dir_item_name(fs_info, path, name, name_len);
+		di = btrfs_match_dir_item_name(fs_info, path, &fname);
 		ASSERT(di); /* logic error */
 	} else if (ret) {
 		goto out;
