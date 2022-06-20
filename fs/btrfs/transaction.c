@@ -1599,8 +1599,9 @@ out:
  * happens, we should return the error number. If the error which just affect
  * the creation of the pending snapshots, just return 0.
  */
-static noinline int create_pending_snapshot(struct btrfs_trans_handle *trans,
-				   struct btrfs_pending_snapshot *pending)
+static noinline int
+create_pending_snapshot(struct btrfs_trans_handle *trans,
+			struct btrfs_pending_snapshot *pending)
 {
 
 	struct btrfs_fs_info *fs_info = trans->fs_info;
@@ -1610,10 +1611,10 @@ static noinline int create_pending_snapshot(struct btrfs_trans_handle *trans,
 	struct btrfs_root *root = pending->root;
 	struct btrfs_root *parent_root;
 	struct btrfs_block_rsv *rsv;
-	struct inode *parent_inode;
+	struct inode *parent_inode = pending->dir;
 	struct btrfs_path *path;
 	struct btrfs_dir_item *dir_item;
-	struct dentry *dentry;
+	struct dentry *dentry; 	
 	struct extent_buffer *tmp;
 	struct extent_buffer *old;
 	struct timespec64 cur_time;
@@ -1622,6 +1623,10 @@ static noinline int create_pending_snapshot(struct btrfs_trans_handle *trans,
 	u64 index = 0;
 	u64 objectid;
 	u64 root_flags;
+	struct fscrypt_name fname = {
+		.disk_name = FSTR_INIT(pending->dentry->d_name.name,
+				       pending->dentry->d_name.len)
+	};
 
 	ASSERT(pending->path);
 	path = pending->path;
@@ -1677,8 +1682,7 @@ static noinline int create_pending_snapshot(struct btrfs_trans_handle *trans,
 	/* check if there is a file/dir which has the same name. */
 	dir_item = btrfs_lookup_dir_item(NULL, parent_root, path,
 					 btrfs_ino(BTRFS_I(parent_inode)),
-					 dentry->d_name.name,
-					 dentry->d_name.len, 0);
+					 &fname, 0);
 	if (dir_item != NULL && !IS_ERR(dir_item)) {
 		pending->error = -EEXIST;
 		goto dir_item_existed;
@@ -1773,7 +1777,7 @@ static noinline int create_pending_snapshot(struct btrfs_trans_handle *trans,
 	ret = btrfs_add_root_ref(trans, objectid,
 				 parent_root->root_key.objectid,
 				 btrfs_ino(BTRFS_I(parent_inode)), index,
-				 dentry->d_name.name, dentry->d_name.len);
+				 &fname);
 	if (ret) {
 		btrfs_abort_transaction(trans, ret);
 		goto fail;
@@ -1805,8 +1809,7 @@ static noinline int create_pending_snapshot(struct btrfs_trans_handle *trans,
 	if (ret < 0)
 		goto fail;
 
-	ret = btrfs_insert_dir_item(trans, dentry->d_name.name,
-				    dentry->d_name.len, BTRFS_I(parent_inode),
+	ret = btrfs_insert_dir_item(trans, &fname, BTRFS_I(parent_inode),
 				    &key, BTRFS_FT_DIR, index);
 	/* We have check then name at the beginning, so it is impossible. */
 	BUG_ON(ret == -EEXIST || ret == -EOVERFLOW);
@@ -1815,8 +1818,8 @@ static noinline int create_pending_snapshot(struct btrfs_trans_handle *trans,
 		goto fail;
 	}
 
-	btrfs_i_size_write(BTRFS_I(parent_inode), parent_inode->i_size +
-					 dentry->d_name.len * 2);
+	btrfs_i_size_write(BTRFS_I(parent_inode),
+			   parent_inode->i_size + fname_len(&fname) * 2);
 	parent_inode->i_mtime = parent_inode->i_ctime =
 		current_time(parent_inode);
 	ret = btrfs_update_inode_fallback(trans, parent_root, BTRFS_I(parent_inode));
