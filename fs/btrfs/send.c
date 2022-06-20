@@ -15,6 +15,7 @@
 #include <linux/string.h>
 #include <linux/compat.h>
 #include <linux/crc32c.h>
+#include <linux/fscrypt.h>
 
 #include "send.h"
 #include "ctree.h"
@@ -1023,7 +1024,7 @@ out:
 }
 
 typedef int (*iterate_dir_item_t)(int num, struct btrfs_key *di_key,
-				  const char *name, int name_len,
+				  struct fscrypt_name *fname,
 				  const char *data, int data_len,
 				  void *ctx);
 
@@ -1073,6 +1074,7 @@ static int iterate_dir_item(struct btrfs_root *root, struct btrfs_path *path,
 
 	num = 0;
 	while (cur < total) {
+		struct fscrypt_name fname;
 		name_len = btrfs_dir_name_len(eb, di);
 		data_len = btrfs_dir_data_len(eb, di);
 		btrfs_dir_item_key_to_cpu(eb, di, &di_key);
@@ -1125,8 +1127,11 @@ static int iterate_dir_item(struct btrfs_root *root, struct btrfs_path *path,
 		len = sizeof(*di) + name_len + data_len;
 		di = (struct btrfs_dir_item *)((char *)di + len);
 		cur += len;
+		fname = (struct fscrypt_name) {
+			.disk_name = FSTR_INIT(buf, name_len)
+		};
 
-		ret = iterate(num, &di_key, buf, name_len, buf + name_len,
+		ret = iterate(num, &di_key, &fname, buf + name_len,
 			      data_len, ctx);
 		if (ret < 0)
 			goto out;
@@ -1580,13 +1585,17 @@ static int gen_unique_name(struct send_ctx *sctx,
 		return -ENOMEM;
 
 	while (1) {
+		struct fscrypt_name fname;
 		len = snprintf(tmp, sizeof(tmp), "o%llu-%llu-%llu",
 				ino, gen, idx);
 		ASSERT(len < sizeof(tmp));
+		fname = (struct fscrypt_name) {
+			.disk_name = FSTR_INIT(tmp, strlen(tmp)),//len)
+		};
 
 		di = btrfs_lookup_dir_item(NULL, sctx->send_root,
 				path, BTRFS_FIRST_FREE_OBJECTID,
-				tmp, strlen(tmp), 0);
+				&fname, 0);
 		btrfs_release_path(path);
 		if (IS_ERR(di)) {
 			ret = PTR_ERR(di);
@@ -1606,7 +1615,7 @@ static int gen_unique_name(struct send_ctx *sctx,
 
 		di = btrfs_lookup_dir_item(NULL, sctx->parent_root,
 				path, BTRFS_FIRST_FREE_OBJECTID,
-				tmp, strlen(tmp), 0);
+				&fname, 0);
 		btrfs_release_path(path);
 		if (IS_ERR(di)) {
 			ret = PTR_ERR(di);
@@ -1728,7 +1737,7 @@ out:
  * Helper function to lookup a dir item in a dir.
  */
 static int lookup_dir_item_inode(struct btrfs_root *root,
-				 u64 dir, const char *name, int name_len,
+				 u64 dir, struct fscrypt_name *fname,
 				 u64 *found_inode)
 {
 	int ret = 0;
@@ -1741,7 +1750,7 @@ static int lookup_dir_item_inode(struct btrfs_root *root,
 		return -ENOMEM;
 
 	di = btrfs_lookup_dir_item(NULL, root, path,
-			dir, name, name_len, 0);
+			dir, fname, 0);
 	if (IS_ERR_OR_NULL(di)) {
 		ret = di ? PTR_ERR(di) : -ENOENT;
 		goto out;
@@ -1831,7 +1840,7 @@ out:
 
 static int is_first_ref(struct btrfs_root *root,
 			u64 ino, u64 dir,
-			const char *name, int name_len)
+			struct fscrypt_name *fname)
 {
 	int ret;
 	struct fs_path *tmp_name;
@@ -1845,12 +1854,12 @@ static int is_first_ref(struct btrfs_root *root,
 	if (ret < 0)
 		goto out;
 
-	if (dir != tmp_dir || name_len != fs_path_len(tmp_name)) {
+	if (dir != tmp_dir || fname_len(fname) != fs_path_len(tmp_name)) {
 		ret = 0;
 		goto out;
 	}
 
-	ret = !memcmp(tmp_name->start, name, name_len);
+	ret = !memcmp(tmp_name->start, fname_name(fname), fname_len(fname));
 
 out:
 	fs_path_free(tmp_name);
@@ -1868,7 +1877,7 @@ out:
  * orphanizing is really required.
  */
 static int will_overwrite_ref(struct send_ctx *sctx, u64 dir, u64 dir_gen,
-			      const char *name, int name_len,
+			      struct fscrypt_name *fname,
 			      u64 *who_ino, u64 *who_gen, u64 *who_mode)
 {
 	int ret = 0;
@@ -1900,7 +1909,7 @@ static int will_overwrite_ref(struct send_ctx *sctx, u64 dir, u64 dir_gen,
 			goto out;
 	}
 
-	ret = lookup_dir_item_inode(sctx->parent_root, dir, name, name_len,
+	ret = lookup_dir_item_inode(sctx->parent_root, dir, fname,
 				    &other_inode);
 	if (ret < 0 && ret != -ENOENT)
 		goto out;
@@ -1941,7 +1950,7 @@ out:
 static int did_overwrite_ref(struct send_ctx *sctx,
 			    u64 dir, u64 dir_gen,
 			    u64 ino, u64 ino_gen,
-			    const char *name, int name_len)
+			    struct fscrypt_name *fname)
 {
 	int ret = 0;
 	u64 gen;
@@ -1968,7 +1977,7 @@ static int did_overwrite_ref(struct send_ctx *sctx,
 	}
 
 	/* check if the ref was overwritten by another ref */
-	ret = lookup_dir_item_inode(sctx->send_root, dir, name, name_len,
+	ret = lookup_dir_item_inode(sctx->send_root, dir, fname,
 				    &ow_inode);
 	if (ret < 0 && ret != -ENOENT)
 		goto out;
@@ -2016,7 +2025,7 @@ static int did_overwrite_first_ref(struct send_ctx *sctx, u64 ino, u64 gen)
 	struct fs_path *name = NULL;
 	u64 dir;
 	u64 dir_gen;
-
+	struct fscrypt_name fname;
 	if (!sctx->parent_root)
 		goto out;
 
@@ -2028,8 +2037,12 @@ static int did_overwrite_first_ref(struct send_ctx *sctx, u64 ino, u64 gen)
 	if (ret < 0)
 		goto out;
 
+	fname = (struct fscrypt_name) {
+		.disk_name = FSTR_INIT(name->start, fs_path_len(name))
+	};
+
 	ret = did_overwrite_ref(sctx, dir, dir_gen, ino, gen,
-			name->start, fs_path_len(name));
+			&fname);
 
 out:
 	fs_path_free(name);
@@ -2162,6 +2175,7 @@ static int __get_cur_name_and_parent(struct send_ctx *sctx,
 	int ret;
 	int nce_ret;
 	struct name_cache_entry *nce = NULL;
+	struct fscrypt_name fname;
 
 	/*
 	 * First check if we already did a call to this function with the same
@@ -2226,8 +2240,11 @@ static int __get_cur_name_and_parent(struct send_ctx *sctx,
 	 * Check if the ref was overwritten by an inode's ref that was processed
 	 * earlier. If yes, treat as orphan and return 1.
 	 */
+	fname = (struct fscrypt_name) {
+		.disk_name = FSTR_INIT(dest->start, fs_path_len(dest))
+	};
 	ret = did_overwrite_ref(sctx, *parent_ino, *parent_gen, ino, gen,
-			dest->start, dest->end - dest->start);
+				&fname);
 	if (ret < 0)
 		goto out;
 	if (ret) {
@@ -3494,6 +3511,9 @@ static int wait_for_dest_dir_move(struct send_ctx *sctx,
 	u64 right_gen;
 	int ret = 0;
 	struct waiting_dir_move *wdm;
+	struct fscrypt_name fname = {
+		.disk_name = FSTR_INIT(parent_ref->name, parent_ref->name_len)
+	};
 
 	if (RB_EMPTY_ROOT(&sctx->waiting_dir_moves))
 		return 0;
@@ -3504,7 +3524,7 @@ static int wait_for_dest_dir_move(struct send_ctx *sctx,
 
 	key.objectid = parent_ref->dir;
 	key.type = BTRFS_DIR_ITEM_KEY;
-	key.offset = btrfs_name_hash(parent_ref->name, parent_ref->name_len);
+	key.offset = btrfs_name_hash(&fname);
 
 	ret = btrfs_search_slot(NULL, sctx->parent_root, &key, path, 0, 0);
 	if (ret < 0) {
@@ -3514,8 +3534,7 @@ static int wait_for_dest_dir_move(struct send_ctx *sctx,
 		goto out;
 	}
 
-	di = btrfs_match_dir_item_name(fs_info, path, parent_ref->name,
-				       parent_ref->name_len);
+	di = btrfs_match_dir_item_name(fs_info, path, &fname);
 	if (!di) {
 		ret = 0;
 		goto out;
@@ -3996,6 +4015,10 @@ static int process_recorded_refs(struct send_ctx *sctx, int *pending_move)
 	 * "testdir_2".
 	 */
 	list_for_each_entry(cur, &sctx->new_refs, list) {
+		struct fscrypt_name fname = {
+			.disk_name = FSTR_INIT(cur->name, cur->name_len)
+		};
+
 		ret = get_cur_inode_state(sctx, cur->dir, cur->dir_gen);
 		if (ret < 0)
 			goto out;
@@ -4009,14 +4032,12 @@ static int process_recorded_refs(struct send_ctx *sctx, int *pending_move)
 		 * simply unlink it.
 		 */
 		ret = will_overwrite_ref(sctx, cur->dir, cur->dir_gen,
-				cur->name, cur->name_len,
-				&ow_inode, &ow_gen, &ow_mode);
+				&fname, &ow_inode, &ow_gen, &ow_mode);
 		if (ret < 0)
 			goto out;
 		if (ret) {
 			ret = is_first_ref(sctx->parent_root,
-					   ow_inode, cur->dir, cur->name,
-					   cur->name_len);
+					   ow_inode, cur->dir, &fname);
 			if (ret < 0)
 				goto out;
 			if (ret) {
@@ -4262,9 +4283,13 @@ static int process_recorded_refs(struct send_ctx *sctx, int *pending_move)
 		 * inodes.
 		 */
 		list_for_each_entry(cur, &sctx->deleted_refs, list) {
+			struct fscrypt_name fname = {
+				.disk_name = FSTR_INIT(cur->name, cur->name_len)
+			};
+
 			ret = did_overwrite_ref(sctx, cur->dir, cur->dir_gen,
 					sctx->cur_ino, sctx->cur_inode_gen,
-					cur->name, cur->name_len);
+					&fname);
 			if (ret < 0)
 				goto out;
 			if (!ret) {
@@ -4606,7 +4631,7 @@ out:
 
 static int send_set_xattr(struct send_ctx *sctx,
 			  struct fs_path *path,
-			  const char *name, int name_len,
+			  struct fscrypt_name *fname,
 			  const char *data, int data_len)
 {
 	int ret = 0;
@@ -4616,7 +4641,8 @@ static int send_set_xattr(struct send_ctx *sctx,
 		goto out;
 
 	TLV_PUT_PATH(sctx, BTRFS_SEND_A_PATH, path);
-	TLV_PUT_STRING(sctx, BTRFS_SEND_A_XATTR_NAME, name, name_len);
+	TLV_PUT_STRING(sctx, BTRFS_SEND_A_XATTR_NAME, fname_name(fname),
+		       fname_len(fname));
 	TLV_PUT(sctx, BTRFS_SEND_A_XATTR_DATA, data, data_len);
 
 	ret = send_cmd(sctx);
@@ -4628,7 +4654,7 @@ out:
 
 static int send_remove_xattr(struct send_ctx *sctx,
 			  struct fs_path *path,
-			  const char *name, int name_len)
+			  struct fscrypt_name *fname)
 {
 	int ret = 0;
 
@@ -4637,7 +4663,8 @@ static int send_remove_xattr(struct send_ctx *sctx,
 		goto out;
 
 	TLV_PUT_PATH(sctx, BTRFS_SEND_A_PATH, path);
-	TLV_PUT_STRING(sctx, BTRFS_SEND_A_XATTR_NAME, name, name_len);
+	TLV_PUT_STRING(sctx, BTRFS_SEND_A_XATTR_NAME, fname_name(fname),
+		       fname_len(fname));
 
 	ret = send_cmd(sctx);
 
@@ -4647,7 +4674,7 @@ out:
 }
 
 static int __process_new_xattr(int num, struct btrfs_key *di_key,
-			       const char *name, int name_len, const char *data,
+			       struct fscrypt_name *fname, const char *data,
 			       int data_len, void *ctx)
 {
 	int ret;
@@ -4656,7 +4683,7 @@ static int __process_new_xattr(int num, struct btrfs_key *di_key,
 	struct posix_acl_xattr_header dummy_acl;
 
 	/* Capabilities are emitted by finish_inode_if_needed */
-	if (!strncmp(name, XATTR_NAME_CAPS, name_len))
+	if (!strncmp(fname_name(fname), XATTR_NAME_CAPS, fname_len(fname)))
 		return 0;
 
 	p = fs_path_alloc();
@@ -4669,8 +4696,10 @@ static int __process_new_xattr(int num, struct btrfs_key *di_key,
 	 * acls will fail later. To fix this, we send a dummy acl list that
 	 * only contains the version number and no entries.
 	 */
-	if (!strncmp(name, XATTR_NAME_POSIX_ACL_ACCESS, name_len) ||
-	    !strncmp(name, XATTR_NAME_POSIX_ACL_DEFAULT, name_len)) {
+	if (!strncmp(fname_name(fname), XATTR_NAME_POSIX_ACL_ACCESS,
+		     fname_len(fname)) ||
+	    !strncmp(fname_name(fname), XATTR_NAME_POSIX_ACL_DEFAULT,
+		     fname_len(fname))) {
 		if (data_len == 0) {
 			dummy_acl.a_version =
 					cpu_to_le32(POSIX_ACL_XATTR_VERSION);
@@ -4683,7 +4712,7 @@ static int __process_new_xattr(int num, struct btrfs_key *di_key,
 	if (ret < 0)
 		goto out;
 
-	ret = send_set_xattr(sctx, p, name, name_len, data, data_len);
+	ret = send_set_xattr(sctx, p, fname, data, data_len);
 
 out:
 	fs_path_free(p);
@@ -4691,7 +4720,7 @@ out:
 }
 
 static int __process_deleted_xattr(int num, struct btrfs_key *di_key,
-				   const char *name, int name_len,
+				   struct fscrypt_name *fname,
 				   const char *data, int data_len, void *ctx)
 {
 	int ret;
@@ -4706,7 +4735,7 @@ static int __process_deleted_xattr(int num, struct btrfs_key *di_key,
 	if (ret < 0)
 		goto out;
 
-	ret = send_remove_xattr(sctx, p, name, name_len);
+	ret = send_remove_xattr(sctx, p, fname);
 
 out:
 	fs_path_free(p);
@@ -4730,20 +4759,21 @@ static int process_deleted_xattr(struct send_ctx *sctx)
 }
 
 struct find_xattr_ctx {
-	const char *name;
-	int name_len;
+	struct fscrypt_name *fname;
 	int found_idx;
 	char *found_data;
 	int found_data_len;
 };
 
-static int __find_xattr(int num, struct btrfs_key *di_key, const char *name,
-			int name_len, const char *data, int data_len, void *vctx)
+static int __find_xattr(int num, struct btrfs_key *di_key,
+			struct fscrypt_name *fname,
+			const char *data, int data_len, void *vctx)
 {
 	struct find_xattr_ctx *ctx = vctx;
 
-	if (name_len == ctx->name_len &&
-	    strncmp(name, ctx->name, name_len) == 0) {
+	if (fname_len(fname) == fname_len(ctx->fname) &&
+	    strncmp(fname_name(fname), fname_name(ctx->fname),
+		    fname_len(fname)) == 0) {
 		ctx->found_idx = num;
 		ctx->found_data_len = data_len;
 		ctx->found_data = kmemdup(data, data_len, GFP_KERNEL);
@@ -4757,14 +4787,13 @@ static int __find_xattr(int num, struct btrfs_key *di_key, const char *name,
 static int find_xattr(struct btrfs_root *root,
 		      struct btrfs_path *path,
 		      struct btrfs_key *key,
-		      const char *name, int name_len,
+		      struct fscrypt_name *fname,
 		      char **data, int *data_len)
 {
 	int ret;
 	struct find_xattr_ctx ctx;
 
-	ctx.name = name;
-	ctx.name_len = name_len;
+	ctx.fname = fname;
 	ctx.found_idx = -1;
 	ctx.found_data = NULL;
 	ctx.found_data_len = 0;
@@ -4786,7 +4815,7 @@ static int find_xattr(struct btrfs_root *root,
 
 
 static int __process_changed_new_xattr(int num, struct btrfs_key *di_key,
-				       const char *name, int name_len,
+				       struct fscrypt_name *fname,
 				       const char *data, int data_len,
 				       void *ctx)
 {
@@ -4796,15 +4825,15 @@ static int __process_changed_new_xattr(int num, struct btrfs_key *di_key,
 	int found_data_len  = 0;
 
 	ret = find_xattr(sctx->parent_root, sctx->right_path,
-			 sctx->cmp_key, name, name_len, &found_data,
+			 sctx->cmp_key, fname, &found_data,
 			 &found_data_len);
 	if (ret == -ENOENT) {
-		ret = __process_new_xattr(num, di_key, name, name_len, data,
+		ret = __process_new_xattr(num, di_key, fname, data,
 					  data_len, ctx);
 	} else if (ret >= 0) {
 		if (data_len != found_data_len ||
 		    memcmp(data, found_data, data_len)) {
-			ret = __process_new_xattr(num, di_key, name, name_len,
+			ret = __process_new_xattr(num, di_key, fname,
 						  data, data_len, ctx);
 		} else {
 			ret = 0;
@@ -4816,7 +4845,7 @@ static int __process_changed_new_xattr(int num, struct btrfs_key *di_key,
 }
 
 static int __process_changed_deleted_xattr(int num, struct btrfs_key *di_key,
-					   const char *name, int name_len,
+					   struct fscrypt_name *fname,
 					   const char *data, int data_len,
 					   void *ctx)
 {
@@ -4824,9 +4853,9 @@ static int __process_changed_deleted_xattr(int num, struct btrfs_key *di_key,
 	struct send_ctx *sctx = ctx;
 
 	ret = find_xattr(sctx->send_root, sctx->left_path, sctx->cmp_key,
-			 name, name_len, NULL, NULL);
+			 fname, NULL, NULL);
 	if (ret == -ENOENT)
-		ret = __process_deleted_xattr(num, di_key, name, name_len, data,
+		ret = __process_deleted_xattr(num, di_key, fname, data,
 					      data_len, ctx);
 	else if (ret >= 0)
 		ret = 0;
@@ -5488,13 +5517,16 @@ static int send_capabilities(struct send_ctx *sctx)
 	char *buf = NULL;
 	int buf_len;
 	int ret = 0;
+	struct fscrypt_name fname = {
+		.disk_name = FSTR_INIT(XATTR_NAME_CAPS, strlen(XATTR_NAME_CAPS))
+	};
 
 	path = alloc_path_for_send();
 	if (!path)
 		return -ENOMEM;
 
 	di = btrfs_lookup_xattr(NULL, sctx->send_root, path, sctx->cur_ino,
-				XATTR_NAME_CAPS, strlen(XATTR_NAME_CAPS), 0);
+				&fname, 0);
 	if (!di) {
 		/* There is no xattr for this inode */
 		goto out;
@@ -5520,8 +5552,7 @@ static int send_capabilities(struct send_ctx *sctx)
 	data_ptr = (unsigned long)(di + 1) + btrfs_dir_name_len(leaf, di);
 	read_extent_buffer(leaf, buf, data_ptr, buf_len);
 
-	ret = send_set_xattr(sctx, fspath, XATTR_NAME_CAPS,
-			strlen(XATTR_NAME_CAPS), buf, buf_len);
+	ret = send_set_xattr(sctx, fspath, &fname, buf, buf_len);
 out:
 	kfree(buf);
 	fs_path_free(fspath);

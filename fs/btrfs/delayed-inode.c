@@ -1439,7 +1439,7 @@ void btrfs_balance_delayed_items(struct btrfs_fs_info *fs_info)
 
 /* Will return 0 or -ENOMEM */
 int btrfs_insert_delayed_dir_index(struct btrfs_trans_handle *trans,
-				   const char *name, int name_len,
+				   const struct fscrypt_name *fname,
 				   struct btrfs_inode *dir,
 				   struct btrfs_disk_key *disk_key, u8 flags,
 				   u64 index)
@@ -1457,7 +1457,8 @@ int btrfs_insert_delayed_dir_index(struct btrfs_trans_handle *trans,
 	if (IS_ERR(delayed_node))
 		return PTR_ERR(delayed_node);
 
-	delayed_item = btrfs_alloc_delayed_item(sizeof(*dir_item) + name_len);
+	delayed_item = btrfs_alloc_delayed_item(sizeof(*dir_item) +
+						fname_len(fname));
 	if (!delayed_item) {
 		ret = -ENOMEM;
 		goto release_node;
@@ -1472,9 +1473,9 @@ int btrfs_insert_delayed_dir_index(struct btrfs_trans_handle *trans,
 	dir_item->location = *disk_key;
 	btrfs_set_stack_dir_transid(dir_item, trans->transid);
 	btrfs_set_stack_dir_data_len(dir_item, 0);
-	btrfs_set_stack_dir_name_len(dir_item, name_len);
+	btrfs_set_stack_dir_name_len(dir_item, fname_len(fname));
 	btrfs_set_stack_dir_flags(dir_item, flags);
-	memcpy((char *)(dir_item + 1), name, name_len);
+	memcpy((char *)(dir_item + 1), fname_name(fname), fname_len(fname));
 
 	data_len = delayed_item->data_len + sizeof(struct btrfs_item);
 
@@ -1525,7 +1526,8 @@ int btrfs_insert_delayed_dir_index(struct btrfs_trans_handle *trans,
 	if (unlikely(ret)) {
 		btrfs_err(trans->fs_info,
 			  "err add delayed dir index item(name: %.*s) into the insertion tree of the delayed node(root id: %llu, inode id: %llu, errno: %d)",
-			  name_len, name, delayed_node->root->root_key.objectid,
+			  fname_len(fname), fname_name(fname),
+			  delayed_node->root->root_key.objectid,
 			  delayed_node->inode_id, ret);
 		BUG();
 	}

@@ -595,10 +595,14 @@ static int check_dir_item(struct extent_buffer *leaf,
 		if (key->type == BTRFS_DIR_ITEM_KEY ||
 		    key->type == BTRFS_XATTR_ITEM_KEY) {
 			char namebuf[max(BTRFS_NAME_LEN, XATTR_NAME_MAX)];
+			struct fscrypt_name fname;
 
 			read_extent_buffer(leaf, namebuf,
 					(unsigned long)(di + 1), name_len);
-			name_hash = btrfs_name_hash(namebuf, name_len);
+			fname = (struct fscrypt_name) {
+				.disk_name = FSTR_INIT(namebuf, name_len)
+			};
+			name_hash = btrfs_name_hash(&fname);
 			if (unlikely(key->offset != name_hash)) {
 				dir_item_err(leaf, slot,
 		"name hash mismatch with key, have 0x%016x expect 0x%016llx",
