@@ -6991,6 +6991,7 @@ void btrfs_log_new_name(struct btrfs_trans_handle *trans,
 	struct btrfs_root *root = inode->root;
 	struct btrfs_log_ctx ctx;
 	bool log_pinned = false;
+	struct fscrypt_name fname;
 	int ret;
 
 	/*
@@ -7033,13 +7034,12 @@ void btrfs_log_new_name(struct btrfs_trans_handle *trans,
 	if (old_dir && old_dir->logged_trans == trans->transid) {
 		struct btrfs_root *log = old_dir->root->log_root;
 		struct btrfs_path *path;
-		struct fscrypt_name fname = {
-			.disk_name = FSTR_INIT(old_dentry->d_name.name,
-					       old_dentry->d_name.len)
-		};
-
 		ASSERT(old_dir_index >= BTRFS_DIR_START_INDEX);
 
+		ret = fscrypt_setup_filename(&old_dir->vfs_inode,
+					     &old_dentry->d_name, 0, &fname);
+		if (ret)
+			goto out;
 		/*
 		 * We have two inodes to update in the log, the old directory and
 		 * the inode that got renamed, so we must pin the log to prevent
@@ -7096,6 +7096,7 @@ void btrfs_log_new_name(struct btrfs_trans_handle *trans,
 	 */
 	btrfs_log_inode_parent(trans, inode, parent, LOG_INODE_EXISTS, &ctx);
 out:
+	fscrypt_free_filename(&fname);
 	/*
 	 * If an error happened mark the log for a full commit because it's not
 	 * consistent and up to date or we couldn't find out if one of the
