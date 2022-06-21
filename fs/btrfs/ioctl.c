@@ -148,7 +148,7 @@ static unsigned int btrfs_inode_flags_to_fsflags(struct btrfs_inode *binode)
 		iflags |= FS_NOCOW_FL;
 	if (ro_flags & BTRFS_INODE_RO_VERITY)
 		iflags |= FS_VERITY_FL;
-	if ((binode->flags & BTRFS_INODE_FSCRYPT_CONTEXT) ||
+	if ((flags & BTRFS_INODE_FSCRYPT_CONTEXT) ||
 	    (btrfs_root_flags(&binode->root->root_item) &
 	     BTRFS_ROOT_SUBVOL_FSCRYPT))
 		iflags |= FS_ENCRYPT_FL;
@@ -795,6 +795,13 @@ static int create_snapshot(struct btrfs_root *root, struct inode *dir,
 		btrfs_warn(fs_info,
 			   "cannot snapshot subvolume with active swapfile");
 		return -ETXTBSY;
+	}
+
+	if ((btrfs_root_flags(&root->root_item) & BTRFS_ROOT_SUBVOL_FSCRYPT) &&
+	    !IS_ENCRYPTED(dir)) {
+		btrfs_warn(fs_info,
+			   "cannot snapshot encrypted volume to unencrypted destination");
+		return -EXDEV;
 	}
 
 	pending_snapshot = kzalloc(sizeof(*pending_snapshot), GFP_KERNEL);
