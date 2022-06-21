@@ -55,6 +55,12 @@ struct fscrypt_name {
 #define fname_name(p)		((p)->disk_name.name)
 #define fname_len(p)		((p)->disk_name.len)
 
+static inline bool fname_encrypted(const struct fscrypt_name *fname)
+{
+	/* This buffer is only allocated if the user name is different */
+	return fname->crypto_buf.name != NULL;
+}
+
 /*
  * struct fscrypt_nokey_name - identifier for directory entry when key is absent
  *
