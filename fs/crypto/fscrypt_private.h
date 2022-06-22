@@ -165,6 +165,27 @@ fscrypt_policy_flags(const union fscrypt_policy *policy)
 	BUG();
 }
 
+#define FSCRYPT_MAX_IV_SIZE	32
+
+/*
+ * fscrypt_extent_context - the encryption context for an extent
+ * 
+ * For filesystems that support extent encryption, this context provides the
+ * necessary randomly-initialized IV in order to encrypt/decrypt the data
+ * stored in the extent. It is stored alongside each extent, and is
+ * insufficient to decrypt the extent: the extent's owning inode(s) provide the
+ * policy information (including key identifier) necessary to decrypt.
+ */
+struct fscrypt_extent_context_v1 {
+	u8 version;
+	u8 iv[FSCRYPT_MAX_IV_SIZE];
+};
+
+union fscrypt_extent_context {
+	u8 version;
+	struct fscrypt_extent_context_v1 v1;
+};
+
 /*
  * For encrypted symlinks, the ciphertext length is stored at the beginning
  * of the string in little-endian format.
@@ -278,8 +299,6 @@ fscrypt_msg(const struct inode *inode, const char *level, const char *fmt, ...);
 	fscrypt_msg((inode), KERN_WARNING, fmt, ##__VA_ARGS__)
 #define fscrypt_err(inode, fmt, ...)		\
 	fscrypt_msg((inode), KERN_ERR, fmt, ##__VA_ARGS__)
-
-#define FSCRYPT_MAX_IV_SIZE	32
 
 union fscrypt_iv {
 	struct {
@@ -628,5 +647,8 @@ int fscrypt_policy_from_context(union fscrypt_policy *policy_u,
 				const union fscrypt_context *ctx_u,
 				int ctx_size);
 const union fscrypt_policy *fscrypt_policy_to_inherit(struct inode *dir);
+int fscrypt_get_extent_context(const struct inode *inode, u64 lblk_num,
+			       union fscrypt_extent_context *ctx,
+			       size_t *extent_offset, size_t *extent_length);
 
 #endif /* _FSCRYPT_PRIVATE_H */
