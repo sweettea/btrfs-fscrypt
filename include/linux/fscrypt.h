@@ -108,6 +108,8 @@ struct fscrypt_nokey_name {
  * pages for writes and therefore won't need the fscrypt bounce page pool.
  */
 #define FS_CFLG_OWN_PAGES (1U << 1)
+/* The filesystem allows partially encrypted directories/files. */
+#define FS_CFLG_ALLOW_PARTIAL (1U << 2)
 
 /* Crypto operations for filesystems */
 struct fscrypt_operations {
@@ -202,7 +204,13 @@ struct fscrypt_operations {
 	 */
 	void (*get_ino_and_lblk_bits)(struct super_block *sb,
 				      int *ino_bits_ret, int *lblk_bits_ret);
-
+	/*
+	 * Generate an IV for a given inode and lblk number, for filesystems
+	 * where additional filesystem-internal information is necessary to
+	 * keep the IV stable.
+	 */
+	void (*get_fs_defined_iv)(u8 *iv, int ivsize, struct inode *inode,
+				  u64 lblk_num);
 	/*
 	 * Return the number of block devices to which the filesystem may write
 	 * encrypted file contents.
@@ -320,6 +328,8 @@ static inline struct page *fscrypt_pagecache_page(struct page *bounce_page)
 }
 
 void fscrypt_free_bounce_page(struct page *bounce_page);
+
+int fscrypt_mode_ivsize(struct inode *inode);
 
 /* policy.c */
 int fscrypt_have_same_policy(struct inode *inode1, struct inode *inode2);
@@ -494,6 +504,11 @@ static inline struct page *fscrypt_pagecache_page(struct page *bounce_page)
 
 static inline void fscrypt_free_bounce_page(struct page *bounce_page)
 {
+}
+
+static inline int fscrypt_mode_ivsize(struct inode *inode)
+{
+	return 0;
 }
 
 /* policy.c */
