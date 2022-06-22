@@ -778,6 +778,85 @@ int fscrypt_set_context(struct inode *inode, void *fs_data)
 EXPORT_SYMBOL_GPL(fscrypt_set_context);
 
 /**
+ * fscrypt_get_extent_context() - Get the fscrypt extent context for a location
+ *
+ * @inode: an inode associated with the extent
+ * @lblk_num: a logical block number within the inode owned by the extent
+ * @ctx: a pointer to return the context found (may be NULL)
+ * @extent_offset: a pointer to return the offset of @lblk_num within the
+ *                 extent (may be NULL)
+ * @extent_length: a pointer to return the length of the extent found (may be
+ *                 NULL)
+ *
+ * Return: 0 on success, -errno on failure
+ */
+int fscrypt_get_extent_context(const struct inode *inode, u64 lblk_num,
+			       union fscrypt_extent_context *ctx,
+			       size_t *extent_offset, size_t *extent_length)
+{
+	int ret;
+	int ctxsize = (ctx == NULL ? 0 : sizeof(*ctx));
+
+	if (!IS_ENCRYPTED(inode))
+		return -ENODATA;
+
+	ret = inode->i_sb->s_cop->get_extent_context(inode, lblk_num, ctx,
+						     ctxsize, extent_offset,
+						     extent_length);
+	if (ret == ctxsize && (!ctx || ctx->version == 1))
+		return 0;
+	if (ret > 0)
+		return -EINVAL;
+	return ret;
+}
+EXPORT_SYMBOL_GPL(fscrypt_get_extent_context);
+
+/**
+ * fscrypt_set_extent_context() - Set an extent's fscrypt context
+ *
+ * @inode: an inode to which the extent belongs
+ * @lblk_num: the offset into the inode at which the extent starts
+ * @extent: private data referring to the extent, given by the FS and passed
+ *          to ->set_extent_context()
+ *
+ * This should be called after fscrypt_prepare_new_inode(), generally during a
+ * filesystem transaction.  Everything here must be %GFP_NOFS-safe.
+ *
+ * Return: 0 on success, -errno on failure
+ */
+int fscrypt_set_extent_context(struct inode *inode, u64 lblk_num, void *extent)
+{
+	struct fscrypt_info *ci = fscrypt_get_info(inode);
+	u8 flags = fscrypt_policy_flags(&ci->ci_policy);
+	union fscrypt_extent_context ctx;
+
+	if (!IS_ENCRYPTED(inode))
+		return -ENODATA;
+
+	/*
+	 * Since the inode using this extent context is variable, most of the
+	 * IV generation policies that are in fscrypt_generate_iv() must be
+	 * implemented here for extent-based policies.
+	 */
+	ctx.v1.version = 1;
+	if (flags & FSCRYPT_POLICY_FLAG_IV_INO_LBLK_64) {
+		WARN_ON_ONCE(lblk_num > U32_MAX);
+		WARN_ON_ONCE(inode->i_ino > U32_MAX);
+		lblk_num |= (u64)inode->i_ino << 32;
+	} else if (flags & FSCRYPT_POLICY_FLAG_IV_INO_LBLK_32) {
+		WARN_ON_ONCE(lblk_num > U32_MAX);
+		lblk_num = (u32)(ci->ci_hashed_ino + lblk_num);
+	} else if (flags & FSCRYPT_POLICY_FLAG_DIRECT_KEY) {
+		memcpy(ctx.v1.iv.nonce, ci->ci_nonce, FSCRYPT_FILE_NONCE_SIZE);
+	}
+	ctx.v1.iv.lblk_num = cpu_to_le64(lblk_num);
+
+	return inode->i_sb->s_cop->set_extent_context(extent,
+						      &ctx, sizeof(ctx));
+}
+EXPORT_SYMBOL_GPL(fscrypt_set_extent_context);
+
+/**
  * fscrypt_parse_test_dummy_encryption() - parse the test_dummy_encryption mount option
  * @param: the mount option
  * @dummy_policy: (input/output) the place to write the dummy policy that will

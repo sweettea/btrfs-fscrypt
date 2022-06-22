@@ -81,8 +81,22 @@ void fscrypt_generate_iv(union fscrypt_iv *iv, u64 lblk_num,
 			 const struct fscrypt_info *ci)
 {
 	u8 flags = fscrypt_policy_flags(&ci->ci_policy);
+	struct inode *inode = ci->ci_inode;
+	const struct fscrypt_operations *s_cop = inode->i_sb->s_cop;
 
-	memset(iv, 0, ci->ci_mode->ivsize);
+	memset(iv, 0, sizeof(*iv));
+	if (s_cop->get_extent_context && lblk_num != U64_MAX) {
+		size_t extent_offset;
+		union fscrypt_extent_context ctx;
+		int ret;
+
+		ret = fscrypt_get_extent_context(inode, lblk_num, &ctx,
+						 &extent_offset, NULL);
+		WARN_ON_ONCE(ret);
+		memcpy(iv->raw, ctx.v1.iv.raw, sizeof(*iv));
+		iv->lblk_num += cpu_to_le64(extent_offset);
+		return;
+	}
 
 	/*
 	 * Filename encryption. For inode-based policies, filenames are
@@ -93,8 +107,8 @@ void fscrypt_generate_iv(union fscrypt_iv *iv, u64 lblk_num,
 
 	if (flags & FSCRYPT_POLICY_FLAG_IV_INO_LBLK_64) {
 		WARN_ON_ONCE(lblk_num > U32_MAX);
-		WARN_ON_ONCE(ci->ci_inode->i_ino > U32_MAX);
-		lblk_num |= (u64)ci->ci_inode->i_ino << 32;
+		WARN_ON_ONCE(inode->i_ino > U32_MAX);
+		lblk_num |= (u64)inode->i_ino << 32;
 	} else if (flags & FSCRYPT_POLICY_FLAG_IV_INO_LBLK_32) {
 		WARN_ON_ONCE(lblk_num > U32_MAX);
 		lblk_num = (u32)(ci->ci_hashed_ino + lblk_num);
