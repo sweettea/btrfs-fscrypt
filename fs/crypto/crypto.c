@@ -69,6 +69,20 @@ void fscrypt_free_bounce_page(struct page *bounce_page)
 }
 EXPORT_SYMBOL(fscrypt_free_bounce_page);
 
+int fscrypt_mode_ivsize(struct inode *inode)
+{
+	struct fscrypt_info *ci;
+
+	if (!fscrypt_needs_contents_encryption(inode))
+		return 0;
+
+	ci = inode->i_crypt_info;
+	if (WARN_ON_ONCE(!ci))
+		return 0;
+	return ci->ci_mode->ivsize;
+}
+EXPORT_SYMBOL(fscrypt_mode_ivsize);
+
 /*
  * Generate the IV for the given logical block number within the given file.
  * For filenames encryption, lblk_num == 0.
@@ -81,13 +95,22 @@ void fscrypt_generate_iv(union fscrypt_iv *iv, u64 lblk_num,
 			 const struct fscrypt_info *ci)
 {
 	u8 flags = fscrypt_policy_flags(&ci->ci_policy);
+	struct inode *inode = ci->ci_inode;
 
 	memset(iv, 0, ci->ci_mode->ivsize);
+	if ((flags & FSCRYPT_POLICY_FLAG_IV_FROM_FS) &&
+	    S_ISREG(inode->i_mode)) {
+		struct fscrypt_operations *s_cop = inode->i_sb->s_cop;
+		s_cop->get_fs_defined_iv(iv->raw, ci->ci_mode->ivsize, inode,
+					 lblk_num);
+		return;
+	}
+
 
 	if (flags & FSCRYPT_POLICY_FLAG_IV_INO_LBLK_64) {
 		WARN_ON_ONCE(lblk_num > U32_MAX);
-		WARN_ON_ONCE(ci->ci_inode->i_ino > U32_MAX);
-		lblk_num |= (u64)ci->ci_inode->i_ino << 32;
+		WARN_ON_ONCE(inode->i_ino > U32_MAX);
+		lblk_num |= (u64)inode->i_ino << 32;
 	} else if (flags & FSCRYPT_POLICY_FLAG_IV_INO_LBLK_32) {
 		WARN_ON_ONCE(lblk_num > U32_MAX);
 		lblk_num = (u32)(ci->ci_hashed_ino + lblk_num);
