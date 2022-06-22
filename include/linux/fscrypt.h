@@ -94,6 +94,13 @@ struct fscrypt_nokey_name {
 /* Maximum value for the third parameter of fscrypt_operations.set_context(). */
 #define FSCRYPT_SET_CONTEXT_MAX_SIZE	40
 
+/*
+ * Maximum value for the third parameter of
+ * fscrypt_operations.set_extent_context(). Update if fscrypt_private.h:
+ * FSCRYPT_MAX_IVSIZE changes
+ */
+#define FSCRYPT_EXTENT_CONTEXT_MAX_SIZE	33
+
 #ifdef CONFIG_FS_ENCRYPTION
 
 /*
@@ -149,6 +156,39 @@ struct fscrypt_operations {
 	 */
 	int (*set_context)(struct inode *inode, const void *ctx, size_t len,
 			   void *fs_data);
+
+	/*
+	 * Get the fscrypt extent context for a given inode and lblk number.
+	 *
+	 * @inode: the inode to which the extent belongs
+	 * @lblk_num: the block number within the file whose extent is being
+	 *            queried
+	 * @ctx: the buffer into which to get the context (may be NULL)
+	 * @len: the length of the @ctx buffer in bytes
+	 * @extent_offset: a pointer to return the offset of @lblk_num within
+	 *                 the extent whose context is returned (may be NULL)
+	 * @extent_length: a pointer to return the total length of the extent
+	 *                 whose context was found (may be NULL)
+	 *
+	 * Return: On success, returns the length of the context in bytes,
+	 * which may be less than @len. On failure, returns -ENODATA if the
+	 * extent doesn't have a context, -ERANGE if the context is longer
+	 * than @len, or another -errno code.
+	 */
+	int (*get_extent_context)(const struct inode *inode, u64 lblk_num,
+				  void *ctx, size_t len,
+				  size_t *extent_offset, size_t *extent_length);
+
+	/*
+	 * Set the fscrypt extent context for an extent.
+	 *
+	 * @extent: an opaque pointer to the filesystem's extent object
+	 * @ctx: the buffer containing the extent context to set
+	 * @len: the length of the @ctx buffer in bytes
+	 *
+	 * Return: 0 on success, -errno on failure.
+	 */
+	int (*set_extent_context)(void *extent, void *ctx, size_t len);
 
 	/*
 	 * Get the dummy fscrypt policy in use on the filesystem (if any).
@@ -322,6 +362,7 @@ int fscrypt_ioctl_get_nonce(struct file *filp, void __user *arg);
 int fscrypt_has_permitted_context(struct inode *parent, struct inode *child);
 int fscrypt_context_for_new_inode(void *ctx, struct inode *inode);
 int fscrypt_set_context(struct inode *inode, void *fs_data);
+int fscrypt_set_extent_context(struct inode *inode, u64 offset, void *extent);
 
 struct fscrypt_dummy_policy {
 	const union fscrypt_policy *policy;
@@ -527,6 +568,12 @@ static inline int fscrypt_has_permitted_context(struct inode *parent,
 }
 
 static inline int fscrypt_set_context(struct inode *inode, void *fs_data)
+{
+	return -EOPNOTSUPP;
+}
+
+static inline int fscrypt_set_extent_context(struct inode *inode, u64 offset,
+					     void *extent)
 {
 	return -EOPNOTSUPP;
 }
