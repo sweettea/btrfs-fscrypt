@@ -186,6 +186,12 @@ static bool fscrypt_supported_v1_policy(const struct fscrypt_policy_v1 *policy,
 			     "v1 policies can't be used on casefolded directories");
 		return false;
 	}
+	
+	if (inode->i_sb->s_cop->get_extent_iv) {
+		fscrypt_warn(inode,
+			     "v1 policies can't be used with this filesystem");
+		return false;
+	}
 
 	return true;
 }
@@ -207,7 +213,8 @@ static bool fscrypt_supported_v2_policy(const struct fscrypt_policy_v2 *policy,
 	if (policy->flags & ~(FSCRYPT_POLICY_FLAGS_PAD_MASK |
 			      FSCRYPT_POLICY_FLAG_DIRECT_KEY |
 			      FSCRYPT_POLICY_FLAG_IV_INO_LBLK_64 |
-			      FSCRYPT_POLICY_FLAG_IV_INO_LBLK_32)) {
+			      FSCRYPT_POLICY_FLAG_IV_INO_LBLK_32 |
+			      FSCRYPT_POLICY_FLAG_IV_PER_RANDOM_EXTENT)) {
 		fscrypt_warn(inode, "Unsupported encryption flags (0x%02x)",
 			     policy->flags);
 		return false;
@@ -216,6 +223,7 @@ static bool fscrypt_supported_v2_policy(const struct fscrypt_policy_v2 *policy,
 	count += !!(policy->flags & FSCRYPT_POLICY_FLAG_DIRECT_KEY);
 	count += !!(policy->flags & FSCRYPT_POLICY_FLAG_IV_INO_LBLK_64);
 	count += !!(policy->flags & FSCRYPT_POLICY_FLAG_IV_INO_LBLK_32);
+	count += !!(policy->flags & FSCRYPT_POLICY_FLAG_IV_PER_RANDOM_EXTENT);
 	if (count > 1) {
 		fscrypt_warn(inode, "Mutually exclusive encryption flags (0x%02x)",
 			     policy->flags);
@@ -241,6 +249,18 @@ static bool fscrypt_supported_v2_policy(const struct fscrypt_policy_v2 *policy,
 	if ((policy->flags & FSCRYPT_POLICY_FLAG_IV_INO_LBLK_32) &&
 	    !supported_iv_ino_lblk_policy(policy, inode, "IV_INO_LBLK_32",
 					  32, 32))
+		return false;
+
+	if ((policy->flags & FSCRYPT_POLICY_FLAG_IV_PER_RANDOM_EXTENT) &&
+	    !inode->i_sb->s_cop->get_extent_iv)
+		return false;
+
+	/*
+	 * If the filesystem defines its own IVs, presumably it does so because
+	 * no existing policy works, so disallow other policies.
+	 */
+	if (inode->i_sb->s_cop->get_extent_iv &&
+	    !(policy->flags & FSCRYPT_POLICY_FLAG_IV_PER_RANDOM_EXTENT))
 		return false;
 
 	if (memchr_inv(policy->__reserved, 0, sizeof(policy->__reserved))) {
