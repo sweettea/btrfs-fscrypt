@@ -323,6 +323,11 @@ static int fscrypt_setup_v2_file_key(struct fscrypt_info *ci,
 		 */
 		err = setup_per_mode_enc_key(ci, mk, mk->mk_direct_keys,
 					     HKDF_CONTEXT_DIRECT_KEY, false);
+	} else if (ci->ci_policy.v2.flags & FSCRYPT_POLICY_FLAG_IV_FROM_FS) {
+		err = setup_per_mode_enc_key(ci, mk,
+					     mk->mk_iv_from_fs_keys,
+					     HKDF_CONTEXT_IV_FROM_FS_KEY,
+					     false);
 	} else if (ci->ci_policy.v2.flags &
 		   FSCRYPT_POLICY_FLAG_IV_INO_LBLK_64) {
 		/*
