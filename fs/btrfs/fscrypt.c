@@ -31,4 +31,5 @@ bool btrfs_fscrypt_match_name(const struct fscrypt_name *fname,
 	return !memcmp(digest, nokey_name->sha256, sizeof(digest));
 }
 
-
+const struct fscrypt_operations btrfs_fscrypt_ops = {
+};
