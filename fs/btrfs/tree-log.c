@@ -6992,7 +6992,6 @@ void btrfs_log_new_name(struct btrfs_trans_handle *trans,
 	struct btrfs_root *root = inode->root;
 	struct btrfs_log_ctx ctx;
 	bool log_pinned = false;
-	struct fscrypt_name fname;
 	int ret;
 
 	/*
@@ -7035,6 +7034,7 @@ void btrfs_log_new_name(struct btrfs_trans_handle *trans,
 	if (old_dir && old_dir->logged_trans == trans->transid) {
 		struct btrfs_root *log = old_dir->root->log_root;
 		struct btrfs_path *path;
+		struct fscrypt_name fname;
 		ASSERT(old_dir_index >= BTRFS_DIR_START_INDEX);
 
 		ret = fscrypt_setup_filename(&old_dir->vfs_inode,
@@ -7053,6 +7053,7 @@ void btrfs_log_new_name(struct btrfs_trans_handle *trans,
 		path = btrfs_alloc_path();
 		if (!path) {
 			ret = -ENOMEM;
+			fscrypt_free_filename(&fname);
 			goto out;
 		}
 
@@ -7082,6 +7083,7 @@ void btrfs_log_new_name(struct btrfs_trans_handle *trans,
 		mutex_unlock(&old_dir->log_mutex);
 
 		btrfs_free_path(path);
+		fscrypt_free_filename(&fname);
 		if (ret < 0)
 			goto out;
 	}
@@ -7097,7 +7099,6 @@ void btrfs_log_new_name(struct btrfs_trans_handle *trans,
 	 */
 	btrfs_log_inode_parent(trans, inode, parent, LOG_INODE_EXISTS, &ctx);
 out:
-	fscrypt_free_filename(&fname);
 	/*
 	 * If an error happened mark the log for a full commit because it's not
 	 * consistent and up to date or we couldn't find out if one of the
