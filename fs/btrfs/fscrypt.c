@@ -71,7 +71,9 @@ static int btrfs_fscrypt_get_context(struct inode *inode, void *ctx, size_t len)
 		/* fscrypt provides max context length, but it could be less */
 		len = min_t(size_t, len, btrfs_item_size(leaf, path->slots[0]));
 		read_extent_buffer(leaf, ctx, ptr, len);
+		pr_info("got ino %u ctx len %u %32ph", inode->i_ino, len, ctx);
 	} else {
+		pr_info("No context");
 		return -EINVAL;
 	}
 
@@ -122,6 +124,7 @@ static int btrfs_fscrypt_set_context(struct inode *inode, const void *ctx,
 			return PTR_ERR(trans);
 	}
 
+	pr_info("setting ino %u ctx to len %u %32ph", inode->i_ino, len, ctx);
 	ret = btrfs_insert_item(trans, BTRFS_I(inode)->root, &key, ctx, len);
 	if (ret)
 		goto out;
@@ -178,6 +181,7 @@ static bool btrfs_fscrypt_empty_dir(struct inode *inode)
 static void btrfs_fscrypt_get_iv(u8 *iv, int ivsize, struct inode *inode,
 				 u64 lblk_num)
 {
+	pr_info("geetting iv for inode %u", inode->i_ino);
 	__le64 *iv_64 = (__le64 *)iv;
 	u64 offset = lblk_num << inode->i_blkbits; 
 	struct extent_map *em = btrfs_get_extent(BTRFS_I(inode), NULL, 0, offset, PAGE_SIZE);

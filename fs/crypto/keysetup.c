@@ -429,12 +429,16 @@ static int setup_file_encryption_key(struct fscrypt_info *ci,
 	int err;
 
 	err = fscrypt_select_encryption_impl(ci);
-	if (err)
+	if (err) {
+		pr_info("bad impl %d", err);
 		return err;
+	}
 
 	err = fscrypt_policy_to_key_spec(&ci->ci_policy, &mk_spec);
-	if (err)
+	if (err) {
+		pr_info("polic to keyspec fail %d", err);
 		return err;
+	}
 
 	key = fscrypt_find_master_key(ci->ci_inode->i_sb, &mk_spec);
 	if (IS_ERR(key)) {
@@ -536,8 +540,10 @@ fscrypt_setup_encryption_info(struct inode *inode,
 	int res;
 
 	res = fscrypt_initialize(inode->i_sb->s_cop->flags);
-	if (res)
+	if (res) {
+		pr_info("init failed");
 		return res;
+	}
 
 	crypt_info = kmem_cache_zalloc(fscrypt_info_cachep, GFP_KERNEL);
 	if (!crypt_info)
@@ -550,6 +556,7 @@ fscrypt_setup_encryption_info(struct inode *inode,
 	mode = select_encryption_mode(&crypt_info->ci_policy, inode);
 	if (IS_ERR(mode)) {
 		res = PTR_ERR(mode);
+		pr_info("mode failed %d", res);
 		goto out;
 	}
 	WARN_ON(mode->ivsize > FSCRYPT_MAX_IV_SIZE);
@@ -557,8 +564,10 @@ fscrypt_setup_encryption_info(struct inode *inode,
 
 	res = setup_file_encryption_key(crypt_info, need_dirhash_key,
 					&master_key);
-	if (res)
+	if (res)  {
+		pr_info("setupkey failed %d", res);
 		goto out;
+	}
 
 	/*
 	 * For existing inodes, multiple tasks may race to set ->i_crypt_info.
@@ -641,6 +650,8 @@ int fscrypt_get_encryption_info(struct inode *inode, bool allow_unsupported)
 	if (!fscrypt_supported_policy(&policy, inode)) {
 		if (allow_unsupported)
 			return 0;
+		fscrypt_warn(inode,
+			     "Unrecognized or corrupt policy for inode %lu", inode->i_ino);
 		return -EINVAL;
 	}
 

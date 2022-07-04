@@ -49,6 +49,7 @@ int fscrypt_policy_to_key_spec(const union fscrypt_policy *policy,
 		return 0;
 	default:
 		WARN_ON(1);
+		pr_info("bad policy version!");
 		return -EINVAL;
 	}
 }
@@ -703,8 +704,10 @@ const union fscrypt_policy *fscrypt_policy_to_inherit(struct inode *dir)
 
 	if (IS_ENCRYPTED(dir)) {
 		err = fscrypt_require_key(dir);
-		if (err)
+		if (err) {
+			pr_info("enokey");
 			return ERR_PTR(err);
+		}
 		return &dir->i_crypt_info->ci_policy;
 	}
 

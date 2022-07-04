@@ -10065,7 +10065,7 @@ static int btrfs_symlink(struct user_namespace *mnt_userns, struct inode *dir,
 	btrfs_set_file_extent_other_encoding(leaf, ei, 0);
 	/* ram size is the unencrypted size */
 	btrfs_set_file_extent_ram_bytes(leaf, ei, name_len);
-	pr_info("Made a symlink ino %u: unenc name,len %s %u, enclen %u", inode->i_ino, symname, name_len, disk_link.len - 1);
+	pr_info("Made a symlink ino %u %s: unenc name,len %s %u, enclen %u", inode->i_ino, IS_ENCRYPTED(inode) ? "enc" : "unenc", symname, name_len, disk_link.len - 1);
 
 	ptr = btrfs_file_extent_inline_start(ei);
 	if (IS_ENCRYPTED(inode)) {
@@ -10105,7 +10105,7 @@ static const char *btrfs_get_link(struct dentry *dentry, struct inode *inode,
 {
 	struct page *cpage;
 	const char *paddr;
-	pr_info("getlink %u flags %u", inode->i_ino, BTRFS_I(inode)->flags);
+	pr_info("getlink %u %s flags %u", inode->i_ino, IS_ENCRYPTED(inode) ? "enc" : "unenc", BTRFS_I(inode)->flags);
 	/*
 	 * TODO: should we have a separate encrypted symlink inode operations
 	 * instead of this conditional like ext4?
