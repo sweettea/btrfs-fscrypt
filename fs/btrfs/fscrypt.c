@@ -43,15 +43,15 @@ static int btrfs_fscrypt_get_context(struct inode *inode, void *ctx, size_t len)
 	struct btrfs_path *path;
 	int ret;
 
-	if (S_ISREG(inode->i_mode) &&
+/*	if (S_ISREG(inode->i_mode) &&
 	    (btrfs_root_flags(&root->root_item) & BTRFS_ROOT_SUBVOL_FSCRYPT)) {
-		/* TODO: cache the item */
+		/* TODO: cache the item /
 		inode = btrfs_iget(inode->i_sb, BTRFS_FIRST_FREE_OBJECTID,
 				   root);
 		if (IS_ERR(inode))
 			return PTR_ERR(inode);
 		put_inode = inode;
-	}
+	}*/
 
 	path = btrfs_alloc_path();
 	if (!path)
@@ -99,9 +99,9 @@ static int btrfs_fscrypt_set_context(struct inode *inode, const void *ctx,
 	 * TODO: for directories, only store the nonce and get the rest from the
 	 * subvolume?
 	 */
-	if (S_ISREG(inode->i_mode) &&
+	/*if (S_ISREG(inode->i_mode) &&
 	    (btrfs_root_flags(&root->root_item) & BTRFS_ROOT_SUBVOL_FSCRYPT))
-		return 0;
+		return 0; */
 
 	if (fs_data) {
 		/*
