@@ -93,6 +93,7 @@ static int btrfs_fscrypt_set_context(struct inode *inode, const void *ctx,
 		.offset = 0,
 	};
 
+	pr_info("setting context for ino %u", inode->i_ino);
 	/*
 	 * If the whole subvolume is encrypted, we can get the policy for
 	 * regular files from the root inode.

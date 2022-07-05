@@ -318,6 +318,7 @@ const char *fscrypt_get_symlink(struct inode *inode, const void *caddr,
 	bool has_key;
 	int err;
 
+	pr_info("decrypting symlink");
 	/* This is for encrypted symlinks only */
 	if (WARN_ON(!IS_ENCRYPTED(inode)))
 		return ERR_PTR(-EINVAL);
@@ -332,8 +333,10 @@ const char *fscrypt_get_symlink(struct inode *inode, const void *caddr,
 	 * regardless of whether the key is available or not.
 	 */
 	err = fscrypt_get_encryption_info(inode, false);
-	if (err)
+	if (err) {
+		pr_info("get_enc_info failed %d", err);
 		return ERR_PTR(err);
+	}
 	has_key = fscrypt_has_encryption_key(inode);
 
 	/*
@@ -341,8 +344,10 @@ const char *fscrypt_get_symlink(struct inode *inode, const void *caddr,
 	 * the ciphertext length, even though this is redundant with i_size.
 	 */
 
-	if (max_size < sizeof(*sd))
+	if (max_size < sizeof(*sd)) {
+		pr_info("max too big");
 		return ERR_PTR(-EUCLEAN);
+	}
 	sd = caddr;
 	cstr.name = (unsigned char *)sd->encrypted_path;
 	cstr.len = le16_to_cpu(sd->len);
@@ -358,8 +363,10 @@ const char *fscrypt_get_symlink(struct inode *inode, const void *caddr,
 		return ERR_PTR(err);
 
 	err = fscrypt_fname_disk_to_usr(inode, 0, 0, &cstr, &pstr);
-	if (err)
+	if (err) {
+		pr_info("disk_to_usr %d", err);
 		goto err_kfree;
+	}
 
 	err = -EUCLEAN;
 	if (pstr.name[0] == '\0')
