@@ -9998,9 +9998,6 @@ static int btrfs_symlink(struct user_namespace *mnt_userns, struct inode *dir,
 	struct fscrypt_str disk_link;
 	u32 name_len = strlen(symname);
 	u8 encryption;
-	/*
-	 * TODO: is this max off by one since the count includes the null byte?
-	 */
 	err = fscrypt_prepare_symlink(dir, symname, name_len,
 				      BTRFS_MAX_INLINE_DATA_SIZE(fs_info),
 				      &disk_link);
@@ -10125,12 +10122,10 @@ static const char *btrfs_get_link(struct dentry *dentry, struct inode *inode,
 	cpage = read_mapping_page(inode->i_mapping, 0, NULL);
 	if (IS_ERR(cpage))
 		return ERR_CAST(cpage);
-	/*
-	 * TODO: the s_blocksize argument is cargo-culted from ext4. It might
-	 * not be right.
-	 */
+	}
 	paddr = fscrypt_get_symlink(inode, page_address(cpage),
-				    inode->i_sb->s_blocksize, done);
+				    BTRFS_MAX_INLINE_DATA_SIZE(BTRFS_I(inode)->root->fs_info),
+				    done);
 	put_page(cpage);
 	return paddr;
 }
