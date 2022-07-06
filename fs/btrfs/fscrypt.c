@@ -149,7 +149,10 @@ static int btrfs_fscrypt_set_context(struct inode *inode, const void *ctx,
 	}
 out:
 	if (!fs_data)
-		btrfs_end_transaction(trans);
+		if (ret)
+			btrfs_abort_transaction(trans, ret);
+		else
+			btrfs_end_transaction(trans);
 
 	return ret;
 }
