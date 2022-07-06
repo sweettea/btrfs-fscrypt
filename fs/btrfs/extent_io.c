@@ -3638,6 +3638,7 @@ static int btrfs_do_readpage(struct page *page, struct extent_map **em_cached,
 	size_t blocksize = inode->i_sb->s_blocksize;
 	struct extent_io_tree *tree = &BTRFS_I(inode)->io_tree;
 
+	pr_info("readpage");
 	ret = set_page_extent_mapped(page);
 	if (ret < 0) {
 		unlock_extent(tree, start, end);

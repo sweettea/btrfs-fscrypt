@@ -443,8 +443,10 @@ static int setup_file_encryption_key(struct fscrypt_info *ci,
 	key = fscrypt_find_master_key(ci->ci_inode->i_sb, &mk_spec);
 	if (IS_ERR(key)) {
 		if (key != ERR_PTR(-ENOKEY) ||
-		    ci->ci_policy.version != FSCRYPT_POLICY_V1)
+		    ci->ci_policy.version != FSCRYPT_POLICY_V1) {
+			pr_info("no master key");
 			return PTR_ERR(key);
+		}
 
 		/*
 		 * As a legacy fallback for v1 policies, search for the key in
@@ -460,11 +462,13 @@ static int setup_file_encryption_key(struct fscrypt_info *ci,
 
 	/* Has the secret been removed (via FS_IOC_REMOVE_ENCRYPTION_KEY)? */
 	if (!is_master_key_secret_present(&mk->mk_secret)) {
+		pr_info("no master key scrt");
 		err = -ENOKEY;
 		goto out_release_key;
 	}
 
 	if (!fscrypt_valid_master_key_size(mk, ci)) {
+		pr_info("no master key size");
 		err = -ENOKEY;
 		goto out_release_key;
 	}
@@ -481,8 +485,10 @@ static int setup_file_encryption_key(struct fscrypt_info *ci,
 		err = -EINVAL;
 		break;
 	}
-	if (err)
+	if (err) {
+		pr_info("setup file key fail");
 		goto out_release_key;
+	}
 
 	*master_key_ret = key;
 	return 0;

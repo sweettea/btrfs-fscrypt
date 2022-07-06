@@ -30,6 +30,7 @@ bool fscrypt_policies_equal(const union fscrypt_policy *policy1,
 	if (policy1->version != policy2->version)
 		return false;
 
+	pr_info("%.*ph %.*ph", fscrypt_policy_size(policy1), policy1, fscrypt_policy_size(policy2), policy2);
 	return !memcmp(policy1, policy2, fscrypt_policy_size(policy1));
 }
 

@@ -7038,7 +7038,7 @@ void btrfs_log_new_name(struct btrfs_trans_handle *trans,
 		ASSERT(old_dir_index >= BTRFS_DIR_START_INDEX);
 
 		ret = fscrypt_setup_filename(&old_dir->vfs_inode,
-					     &old_dentry->d_name, 0, &fname);
+					     &old_dentry->d_name, 1, &fname);
 		if (ret)
 			goto out;
 		/*

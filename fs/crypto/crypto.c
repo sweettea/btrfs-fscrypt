@@ -132,14 +132,18 @@ int fscrypt_crypt_subblock(const struct inode *inode, fscrypt_direction_t rw,
 	struct skcipher_request *req = NULL;
 	DECLARE_CRYPTO_WAIT(wait);
 	struct fscrypt_info *ci = inode->i_crypt_info;
+	pr_info("tfm getting");
 	struct crypto_skcipher *tfm = ci->ci_enc_key.tfm;
+	pr_info("tfm gotted");
 	struct scatterlist sg;
 	int res = 0;
 
 	if (WARN_ON_ONCE(len % FSCRYPT_CONTENTS_ALIGNMENT != 0))
 		return -EINVAL;
 
+	pr_info("generating IV");
 	fscrypt_generate_iv(&iv, lblk_num, ci);
+	pr_info("generated IV");
 
 	req = skcipher_request_alloc(tfm, gfp_flags);
 	if (!req)

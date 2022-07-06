@@ -25,6 +25,7 @@ bool btrfs_fscrypt_match_name(const struct fscrypt_name *fname,
 		return !memcmp_extent_buffer(leaf, fname->disk_name.name,
 					     de_name, de_name_len);
 	}
+	pr_info("tryna match nokey");
 	if (de_name_len <= sizeof(nokey_name->bytes))
 		return false;
 	if (memcmp_extent_buffer(leaf, nokey_name->bytes, de_name,
@@ -46,6 +47,7 @@ static int btrfs_fscrypt_get_context(struct inode *inode, void *ctx, size_t len)
 	pr_info("getcontext ino %u", inode->i_ino);
 	if (S_ISREG(inode->i_mode) &&
 	    (btrfs_root_flags(&root->root_item) & BTRFS_ROOT_SUBVOL_FSCRYPT)) {
+		pr_info("shortcircuiting");
 		/* TODO: cache the item */
 		inode = btrfs_iget(inode->i_sb, BTRFS_FIRST_FREE_OBJECTID,
 				   root);
@@ -96,6 +98,9 @@ static int btrfs_fscrypt_set_context(struct inode *inode, const void *ctx,
 	};
 
 	pr_info("setting context for ino %u", inode->i_ino);
+	if (inode->i_ino == 257) {
+		dump_stack();
+	}
 	/*
 	 * If the whole subvolume is encrypted, we can get the policy for
 	 * regular files from the root inode.
@@ -104,8 +109,10 @@ static int btrfs_fscrypt_set_context(struct inode *inode, const void *ctx,
 	 * subvolume?
 	 */
 	if (S_ISREG(inode->i_mode) &&
-	    (btrfs_root_flags(&root->root_item) & BTRFS_ROOT_SUBVOL_FSCRYPT))
+	    (btrfs_root_flags(&root->root_item) & BTRFS_ROOT_SUBVOL_FSCRYPT)) {
+		pr_info("shortcircuiting");
 		return 0;
+	}
 
 	if (fs_data) {
 		/*
@@ -115,6 +122,7 @@ static int btrfs_fscrypt_set_context(struct inode *inode, const void *ctx,
 		 */
 		trans = fs_data;
 	} else {
+		pr_info("starting setctxt txaction");
 		/*
 		 * 1 for the inode item
 		 * 1 for the root item if the inode is a subvolume
@@ -124,11 +132,15 @@ static int btrfs_fscrypt_set_context(struct inode *inode, const void *ctx,
 			return PTR_ERR(trans);
 	}
 
-	pr_info("setting ino %u ctx to len %u %32ph", inode->i_ino, len, ctx);
-	ret = btrfs_insert_item(trans, BTRFS_I(inode)->root, &key, ctx, len);
-	if (ret)
-		goto out;
+	pr_info("setting ino %u ctx to len %u %32ph fsdata was %px", inode->i_ino, len, ctx, fs_data);
 
+	ret = btrfs_insert_item(trans, BTRFS_I(inode)->root, &key, ctx, len);
+	if (ret) {
+		pr_info("item already exists!");
+		goto out;
+	}
+
+	pr_info("inserted");
 	BTRFS_I(inode)->flags |= BTRFS_INODE_FSCRYPT_CONTEXT;
 	btrfs_sync_inode_flags_to_i_flags(inode);
 	if (!fs_data) {
@@ -137,6 +149,7 @@ static int btrfs_fscrypt_set_context(struct inode *inode, const void *ctx,
 		ret = btrfs_update_inode(trans, root, BTRFS_I(inode));
 		if (ret)
 			goto out;
+		pr_info("updated inode");
 		/*
 		 * For new subvolumes, the root item is already initialized with
 		 * the BTRFS_ROOT_SUBVOL_FSCRYPT flag.
@@ -147,9 +160,11 @@ static int btrfs_fscrypt_set_context(struct inode *inode, const void *ctx,
 			btrfs_set_root_flags(&root->root_item,
 					     root_flags |
 					     BTRFS_ROOT_SUBVOL_FSCRYPT);
+			pr_info("updating root");
 			ret = btrfs_update_root(trans, root->fs_info->tree_root,
 						&root->root_key,
 						&root->root_item);
+			pr_info("updated root");
 		}
 	}
 out:
@@ -159,6 +174,7 @@ out:
 		else
 			btrfs_end_transaction(trans);
 
+	pr_info("done setting ino %u ctx", inode->i_ino);
 	return ret;
 }
 
@@ -181,9 +197,13 @@ static bool btrfs_fscrypt_empty_dir(struct inode *inode)
 static void btrfs_fscrypt_get_iv(u8 *iv, int ivsize, struct inode *inode,
 				 u64 lblk_num)
 {
-	pr_info("geetting iv for inode %u", inode->i_ino);
+	if (inode == NULL) {
+		pr_info("geetting iv for null inode");
+	}
+	else
+		pr_info("geetting iv for inode %u", inode->i_ino);
 	__le64 *iv_64 = (__le64 *)iv;
-	u64 offset = lblk_num << inode->i_blkbits; 
+	u64 offset = lblk_num << inode->i_blkbits;
 	struct extent_map *em = btrfs_get_extent(BTRFS_I(inode), NULL, 0, offset, PAGE_SIZE);
 	if (em) {
 		memcpy(iv, em->iv, ivsize);

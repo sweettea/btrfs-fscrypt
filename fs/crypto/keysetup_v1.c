@@ -309,11 +309,16 @@ int fscrypt_setup_v1_file_key_via_subscribed_keyrings(struct fscrypt_info *ci)
 						ci->ci_policy.v1.master_key_descriptor,
 						ci->ci_mode->keysize, &payload);
 	}
-	if (IS_ERR(key))
+	if (IS_ERR(key)) {
+		pr_info("setup v1 file key via failed");
 		return PTR_ERR(key);
+	}
 
 	err = fscrypt_setup_v1_file_key(ci, payload->raw);
 	up_read(&key->sem);
 	key_put(key);
+	if (err) {
+		pr_info("setup v1 file key ");
+	}	
 	return err;
 }

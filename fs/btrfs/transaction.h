@@ -56,8 +56,7 @@ struct btrfs_transaction {
 	struct list_head dirty_bgs;
 
 	/*
-	 * There is no explicit lock which protects io_bgs, rather its
-	 * consistency is implied by the fact that all the sites which modify
+	 * There is no explicit lock which protects io_bgs, rather its * consistency is implied by the fact that all the sites which modify
 	 * it do so under some form of transaction critical section, namely:
 	 *
 	 * - btrfs_start_dirty_block_groups - This function can only ever be

@@ -5479,6 +5479,7 @@ long btrfs_ioctl(struct file *file, unsigned int
 			return -EOPNOTSUPP;
 		/* TODO: what if we're RO? Do we need to commit? */
 		btrfs_set_fs_incompat(fs_info, FSCRYPT);
+		pr_info("set enc policy");
 		return fscrypt_ioctl_set_policy(file, (const void __user *)arg);
 	}
 	case FS_IOC_GET_ENCRYPTION_POLICY:

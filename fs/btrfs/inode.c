@@ -340,7 +340,7 @@ static int insert_inline_extent(struct btrfs_trans_handle *trans,
 
 			kaddr = kmap_atomic(cpage);
 			/* TODO: dec doesn't operate pagewise */
-			if (encryption) {
+			if (0 && encryption) {
 				char *tmp;
 				
 				stored_size = ALIGN(stored_size, FSCRYPT_CONTENTS_ALIGNMENT);
@@ -365,7 +365,7 @@ static int insert_inline_extent(struct btrfs_trans_handle *trans,
 		page = find_get_page(inode->vfs_inode.i_mapping, 0);
 		btrfs_set_file_extent_compression(leaf, ei, 0);
 		kaddr = kmap_atomic(page);
-		if (encryption) {
+		if (0 && encryption) {
 			char *tmp;
 			
 			size = ALIGN(size, FSCRYPT_CONTENTS_ALIGNMENT);
@@ -5520,7 +5520,6 @@ static int btrfs_inode_by_name(struct inode *dir, struct dentry *dentry,
 	path = btrfs_alloc_path();
 	if (!path)
 		return -ENOMEM;
-	
 	ret = fscrypt_setup_filename(dir, &dentry->d_name, 1, &fname);
 	if (ret)
 		goto out;
@@ -5975,19 +5974,20 @@ static int btrfs_real_readdir(struct file *file, struct dir_context *ctx)
 	bool put = false;
 	struct btrfs_key location;
 	struct fscrypt_str fstr = FSTR_INIT(NULL, 0);
-	u32 max_presented_len = 0;
 
 	if (!dir_emit_dots(file, ctx))
 		return 0;
 
+	pr_info("real_readdir");
 	if (BTRFS_I(inode)->flags & BTRFS_INODE_FSCRYPT_CONTEXT) {
 		ret = fscrypt_prepare_readdir(inode);
-		if (ret)
+		if (ret) {
+			pr_info("prep_readdir");
 			return ret;
+		}
 		ret = fscrypt_fname_alloc_buffer(BTRFS_NAME_LEN, &fstr);
 		if (ret)
 			return ret;
-		max_presented_len = fstr.len;
 	}
 
 	path = btrfs_alloc_path();
@@ -6326,6 +6326,8 @@ int btrfs_new_inode_prepare(struct btrfs_new_inode_args *args,
 	ret = fscrypt_prepare_new_inode(dir, inode, &args->encrypt);
 	if (ret)
 		return ret;
+
+	pr_info("%sncrypting new inode dentryname %.*s", args->encrypt ? "E" : "Not e", fname_len(&args->fname), fname_name(&args->fname));
 	
 	/* 1 to add inode item */
 	*trans_num_items = 1;
@@ -6922,7 +6924,7 @@ static noinline int uncompress_inline(struct btrfs_path *path,
 	ptr = btrfs_file_extent_inline_start(item);
 
 	read_extent_buffer(leaf, tmp, ptr, inline_size);
-	if (btrfs_file_extent_encryption(leaf, item)) {
+	if (0 && btrfs_file_extent_encryption(leaf, item)) {
 		struct inode *inode = page->mapping->host;
 		fscrypt_decrypt_subblock_chunk(inode, tmp, inline_size);
 	}
@@ -7157,7 +7159,7 @@ next:
 					       PAGE_SIZE - pg_offset -
 					       copy_size);
 				}
-				if (btrfs_file_extent_encryption(leaf, item))
+				if (0 && btrfs_file_extent_encryption(leaf, item))
 					fscrypt_decrypt_subblock_chunk(
 						&inode->vfs_inode,
 						map + pg_offset, copy_size);
