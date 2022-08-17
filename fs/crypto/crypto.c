@@ -23,6 +23,7 @@
 #include <linux/pagemap.h>
 #include <linux/mempool.h>
 #include <linux/module.h>
+#include <linux/random.h>
 #include <linux/scatterlist.h>
 #include <linux/ratelimit.h>
 #include <crypto/skcipher.h>
@@ -68,6 +69,31 @@ void fscrypt_free_bounce_page(struct page *bounce_page)
 	mempool_free(bounce_page, fscrypt_bounce_page_pool);
 }
 EXPORT_SYMBOL(fscrypt_free_bounce_page);
+
+int fscrypt_mode_ivsize(struct inode *inode)
+{
+	struct fscrypt_info *ci;
+
+	if (!fscrypt_needs_contents_encryption(inode))
+		return 0;
+
+	ci = inode->i_crypt_info;
+	if (WARN_ON_ONCE(!ci))
+		return 0;
+	return ci->ci_mode->ivsize;
+}
+EXPORT_SYMBOL(fscrypt_mode_ivsize);
+
+/**
+ * fscrypt_generate_random_iv() - initialize a new iv for an IV_FROM_FS filesystem
+ * @inode: the inode to which the new IV will belong
+ * @iv: an output buffer, long enough for the requisite IV
+ */
+void fscrypt_generate_random_iv(struct inode *inode, u8 *iv)
+{
+	get_random_bytes(iv, fscrypt_mode_ivsize(inode));
+}
+EXPORT_SYMBOL(fscrypt_generate_random_iv);
 
 /*
  * Generate the IV for the given logical block number within the given file.
