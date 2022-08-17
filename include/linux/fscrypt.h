@@ -317,6 +317,9 @@ static inline struct page *fscrypt_pagecache_page(struct page *bounce_page)
 
 void fscrypt_free_bounce_page(struct page *bounce_page);
 
+int fscrypt_mode_ivsize(struct inode *inode);
+void fscrypt_generate_random_iv(struct inode *inode, u8 *iv);
+
 /* policy.c */
 int fscrypt_have_same_policy(struct inode *inode1, struct inode *inode2);
 int fscrypt_ioctl_set_policy(struct file *filp, const void __user *arg);
