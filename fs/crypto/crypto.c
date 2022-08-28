@@ -71,7 +71,7 @@ EXPORT_SYMBOL(fscrypt_free_bounce_page);
 
 /*
  * Generate the IV for the given logical block number within the given file.
- * For filenames encryption, lblk_num == 0.
+ * For filenames encryption, lblk_num == U64_MAX.
  *
  * Keep this in sync with fscrypt_limit_io_blocks().  fscrypt_limit_io_blocks()
  * needs to know about any IV generation methods where the low bits of IV don't
@@ -83,6 +83,13 @@ void fscrypt_generate_iv(union fscrypt_iv *iv, u64 lblk_num,
 	u8 flags = fscrypt_policy_flags(&ci->ci_policy);
 
 	memset(iv, 0, ci->ci_mode->ivsize);
+
+	/*
+	 * Filename encryption. For inode-based policies, filenames are
+	 * encrypted as though they are lblk 0.
+	 */
+	if (lblk_num == U64_MAX)
+		lblk_num = 0;
 
 	if (flags & FSCRYPT_POLICY_FLAG_IV_INO_LBLK_64) {
 		WARN_ON_ONCE(lblk_num > U32_MAX);
