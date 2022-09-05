@@ -31,7 +31,7 @@ However, except for filenames, fscrypt does not encrypt filesystem
 metadata.
 
 Unlike eCryptfs, which is a stacked filesystem, fscrypt is integrated
-directly into supported filesystems --- currently ext4, F2FS, and
+directly into supported filesystems --- currently btrfs, ext4, F2FS, and
 UBIFS.  This allows encrypted files to be read and written without
 caching both the decrypted and encrypted pages in the pagecache,
 thereby nearly halving the memory used and bringing it in line with
@@ -41,10 +41,10 @@ causing application compatibility issues; fscrypt allows the full 255
 bytes (NAME_MAX).  Finally, unlike eCryptfs, the fscrypt API can be
 used by unprivileged users, with no need to mount anything.
 
-fscrypt does not support encrypting files in-place.  Instead, it
-supports marking an empty directory as encrypted.  Then, after
-userspace provides the key, all regular files, directories, and
-symbolic links created in that directory tree are transparently
+For most filesystems, fscrypt does not support encrypting files
+in-place.  Instead, it supports marking an empty directory as encrypted.
+Then, after userspace provides the key, all regular files, directories,
+and symbolic links created in that directory tree are transparently
 encrypted.
 
 Threat model
@@ -280,6 +280,11 @@ included in the IV.  Moreover:
   key derived using the KDF.  Users may use the same master key for
   other v2 encryption policies.
 
+For filesystems with extent-based content encryption (e.g. btrfs),
+this is the only choice. Data shared among multiple inodes must share
+the exact same key, therefore necessitating inodes using the same key
+for contents encryption.
+
 IV_INO_LBLK_64 policies
 -----------------------
 
@@ -374,12 +379,12 @@ to individual filesystems.  However, authenticated encryption (AE)
 modes are not currently supported because of the difficulty of dealing
 with ciphertext expansion.
 
-Contents encryption
--------------------
+File-based contents encryption
+------------------------------
 
-For file contents, each filesystem block is encrypted independently.
-Starting from Linux kernel 5.5, encryption of filesystems with block
-size less than system's page size is supported.
+For most filesystems, each filesystem block within each file is
+encrypted independently.  Starting from Linux kernel 5.5, encryption of
+filesystems with block size less than system's page size is supported.
 
 Each block's IV is set to the logical block number within the file as
 a little endian number, except that:
@@ -402,6 +407,20 @@ a little endian number, except that:
 Note that because file logical block numbers are included in the IVs,
 filesystems must enforce that blocks are never shifted around within
 encrypted files, e.g. via "collapse range" or "insert range".
+
+Extent-based contents encryption
+--------------------------------
+
+For certain filesystems (currently only btrfs), data is encrypted on a
+per-extent basis. Each filesystem block in a data extent is encrypted
+independently. Multiple files may refer to the extent, as long as they
+all share the same key.  The filesystem may relocate the extent on disk,
+as long as the encrypted data within the extent retains its offset
+within the data extent.
+
+Each extent stores a starting IV; each block's IV within this is
+set to the logical block number within the extent as a little endian
+number.
 
 Filenames encryption
 --------------------
@@ -525,13 +544,14 @@ This structure must be initialized as follows:
   struct fscrypt_policy_v2.
 
 If the file is not yet encrypted, then FS_IOC_SET_ENCRYPTION_POLICY
-verifies that the file is an empty directory.  If so, the specified
-encryption policy is assigned to the directory, turning it into an
-encrypted directory.  After that, and after providing the
-corresponding master key as described in `Adding keys`_, all regular
-files, directories (recursively), and symlinks created in the
-directory will be encrypted, inheriting the same encryption policy.
-The filenames in the directory's entries will be encrypted as well.
+verifies that the file is an empty directory, unless btrfs is being
+used.  If so, the specified encryption policy is assigned to the
+directory, turning it into an encrypted directory.  After that, and
+after providing the corresponding master key as described in `Adding
+keys`_, all regular files, directories (recursively), and symlinks
+created in the directory will be encrypted, inheriting the same
+encryption policy.  The filenames in the directory's entries will be
+encrypted as well.
 
 Alternatively, if the file is already encrypted, then
 FS_IOC_SET_ENCRYPTION_POLICY validates that the specified encryption
@@ -551,6 +571,14 @@ key can be removed right away afterwards.
 Note that the ext4 filesystem does not allow the root directory to be
 encrypted, even if it is empty.  Users who want to encrypt an entire
 filesystem with one key should consider using dm-crypt instead.
+
+Note that btrfs permits setting a currently unencrypted 'subvolume' to
+encrypted. This means all newly written data, and files, will be
+encrypted, but existing data and filenames will remain unencrypted. This
+is intended for use in containers: initially identical unencrypted
+snapshot volumes provide the base for multiple containers' filesystems,
+but after each encrypts their volume with a different key, any new
+sensitive data written by the container will be encrypted.
 
 FS_IOC_SET_ENCRYPTION_POLICY can fail with the following errors:
 
