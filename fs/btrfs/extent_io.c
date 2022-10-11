@@ -3708,7 +3708,7 @@ static int fiemap_search_slot(struct btrfs_inode *inode, struct btrfs_path *path
 static int fiemap_process_hole(struct btrfs_inode *inode,
 			       struct fiemap_extent_info *fieinfo,
 			       struct fiemap_cache *cache,
-			       struct btrfs_backref_shared_cache *backref_cache,
+			       struct btrfs_backref_share_check_ctx *backref_ctx,
 			       u64 disk_bytenr, u64 extent_offset,
 			       u64 extent_gen,
 			       struct ulist *roots, struct ulist *tmp_ulist,
@@ -3758,7 +3758,7 @@ static int fiemap_process_hole(struct btrfs_inode *inode,
 							  disk_bytenr,
 							  extent_gen, roots,
 							  tmp_ulist,
-							  backref_cache);
+							  backref_ctx);
 				if (ret < 0)
 					return ret;
 				else if (ret > 0)
@@ -3808,7 +3808,7 @@ static int fiemap_process_hole(struct btrfs_inode *inode,
 							  disk_bytenr,
 							  extent_gen, roots,
 							  tmp_ulist,
-							  backref_cache);
+							  backref_ctx);
 			if (ret < 0)
 				return ret;
 			else if (ret > 0)
@@ -3907,7 +3907,7 @@ int extent_fiemap(struct btrfs_inode *inode, struct fiemap_extent_info *fieinfo,
 	struct extent_state *cached_state = NULL;
 	struct btrfs_path *path;
 	struct fiemap_cache cache = { 0 };
-	struct btrfs_backref_shared_cache *backref_cache;
+	struct btrfs_backref_share_check_ctx *backref_ctx;
 	struct ulist *roots;
 	struct ulist *tmp_ulist;
 	u64 last_extent_end;
@@ -3917,11 +3917,11 @@ int extent_fiemap(struct btrfs_inode *inode, struct fiemap_extent_info *fieinfo,
 	bool stopped = false;
 	int ret;
 
-	backref_cache = kzalloc(sizeof(*backref_cache), GFP_KERNEL);
+	backref_ctx = kzalloc(sizeof(*backref_ctx), GFP_KERNEL);
 	path = btrfs_alloc_path();
 	roots = ulist_alloc(GFP_KERNEL);
 	tmp_ulist = ulist_alloc(GFP_KERNEL);
-	if (!backref_cache || !path || !roots || !tmp_ulist) {
+	if (!backref_ctx || !path || !roots || !tmp_ulist) {
 		ret = -ENOMEM;
 		goto out;
 	}
@@ -3981,7 +3981,7 @@ int extent_fiemap(struct btrfs_inode *inode, struct fiemap_extent_info *fieinfo,
 			const u64 range_end = min(key.offset, lockend) - 1;
 
 			ret = fiemap_process_hole(inode, fieinfo, &cache,
-						  backref_cache, 0, 0, 0,
+						  backref_ctx, 0, 0, 0,
 						  roots, tmp_ulist,
 						  prev_extent_end, range_end);
 			if (ret < 0) {
@@ -4022,14 +4022,14 @@ int extent_fiemap(struct btrfs_inode *inode, struct fiemap_extent_info *fieinfo,
 						 extent_len, flags);
 		} else if (extent_type == BTRFS_FILE_EXTENT_PREALLOC) {
 			ret = fiemap_process_hole(inode, fieinfo, &cache,
-						  backref_cache,
+						  backref_ctx,
 						  disk_bytenr, extent_offset,
 						  extent_gen, roots, tmp_ulist,
 						  key.offset, extent_end - 1);
 		} else if (disk_bytenr == 0) {
 			/* We have an explicit hole. */
 			ret = fiemap_process_hole(inode, fieinfo, &cache,
-						  backref_cache, 0, 0, 0,
+						  backref_ctx, 0, 0, 0,
 						  roots, tmp_ulist,
 						  key.offset, extent_end - 1);
 		} else {
@@ -4040,7 +4040,7 @@ int extent_fiemap(struct btrfs_inode *inode, struct fiemap_extent_info *fieinfo,
 								  extent_gen,
 								  roots,
 								  tmp_ulist,
-								  backref_cache);
+								  backref_ctx);
 				if (ret < 0)
 					goto out_unlock;
 				else if (ret > 0)
@@ -4089,7 +4089,7 @@ check_eof_delalloc:
 	path = NULL;
 
 	if (!stopped && prev_extent_end < lockend) {
-		ret = fiemap_process_hole(inode, fieinfo, &cache, backref_cache,
+		ret = fiemap_process_hole(inode, fieinfo, &cache, backref_ctx,
 					  0, 0, 0, roots, tmp_ulist,
 					  prev_extent_end, lockend - 1);
 		if (ret < 0)
@@ -4122,7 +4122,7 @@ check_eof_delalloc:
 out_unlock:
 	unlock_extent(&inode->io_tree, lockstart, lockend, &cached_state);
 out:
-	kfree(backref_cache);
+	kfree(backref_ctx);
 	btrfs_free_path(path);
 	ulist_free(roots);
 	ulist_free(tmp_ulist);
