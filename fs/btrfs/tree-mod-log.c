@@ -220,7 +220,7 @@ static struct tree_mod_elem *alloc_tree_mod_elem(struct extent_buffer *eb,
 }
 
 int btrfs_tree_mod_log_insert_key(struct extent_buffer *eb, int slot,
-				  enum btrfs_mod_log_op op, gfp_t flags)
+				  enum btrfs_mod_log_op op)
 {
 	struct tree_mod_elem *tm;
 	int ret;
@@ -228,7 +228,7 @@ int btrfs_tree_mod_log_insert_key(struct extent_buffer *eb, int slot,
 	if (!tree_mod_need_log(eb->fs_info, eb))
 		return 0;
 
-	tm = alloc_tree_mod_elem(eb, slot, op, flags);
+	tm = alloc_tree_mod_elem(eb, slot, op, GFP_NOFS);
 	if (!tm)
 		return -ENOMEM;
 
