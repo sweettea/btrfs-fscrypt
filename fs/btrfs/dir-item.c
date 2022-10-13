@@ -432,20 +432,39 @@ struct btrfs_dir_item *btrfs_match_dir_item_fname(struct btrfs_fs_info *fs_info,
 	u32 cur = 0;
 	u32 this_len;
 	struct extent_buffer *leaf;
+	bool encrypted = (name->crypto_buf.name != NULL);
+	struct fscrypt_name unencrypted_name;
+
+	if (encrypted) {
+		unencrypted_name = (struct fscrypt_name){
+			.usr_fname = name->usr_fname,
+			.disk_name = {
+				.name = (unsigned char *)name->usr_fname->name,
+				.len = name->usr_fname->len,
+			},
+		};
+	}
 
 	leaf = path->nodes[0];
 	dir_item = btrfs_item_ptr(leaf, path->slots[0], struct btrfs_dir_item);
 
 	total_len = btrfs_item_size(leaf, path->slots[0]);
 	while (cur < total_len) {
-		this_len = sizeof(*dir_item) +
-			btrfs_dir_name_len(leaf, dir_item) +
+		u64 dir_name_len = btrfs_dir_name_len(leaf, dir_item);
+
+		this_len = sizeof(*dir_item) + dir_name_len +
 			btrfs_dir_data_len(leaf, dir_item);
 		name_ptr = (unsigned long)(dir_item + 1);
 
 		if (btrfs_fscrypt_match_name(name, leaf, name_ptr,
-					     btrfs_dir_name_len(leaf, dir_item)))
+					     dir_name_len))
 			return dir_item;
+
+		if (encrypted &&
+		    btrfs_fscrypt_match_name(&unencrypted_name, leaf,
+					     name_ptr, dir_name_len)) {
+			return dir_item;
+		}
 
 		cur += this_len;
 		dir_item = (struct btrfs_dir_item *)((char *)dir_item +
