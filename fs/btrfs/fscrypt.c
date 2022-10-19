@@ -231,6 +231,7 @@ static int btrfs_fscrypt_get_extent_context(const struct inode *inode,
 		if (ctx)
 			memcpy(ctx, em->fscrypt_context.buffer,
 			       em->fscrypt_context.len);
+		pr_err("Got ec for %u lblk %u %32ph", inode->i_ino, lblk_num, em->fscrypt_context.buffer);
 
 		if (extent_offset)
 			*extent_offset

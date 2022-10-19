@@ -8,6 +8,7 @@
 #include <linux/security.h>
 #include <linux/posix_acl_xattr.h>
 #include <linux/iversion.h>
+#include <linux/fscrypt.h>
 #include <linux/fsverity.h>
 #include <linux/sched/mm.h>
 #include "ctree.h"
@@ -218,14 +219,67 @@ static int write_key_bytes(struct btrfs_inode *inode, u8 key_type, u64 offset,
 	struct btrfs_key key;
 	unsigned long copy_bytes;
 	unsigned long src_offset = 0;
-	void *data;
+	void *data_pos;
 	int ret = 0;
+#ifdef CONFIG_FS_ENCRYPTION
+	struct page *ciphertext_page = NULL;
+	struct page *extra_page = NULL;
+	char *ciphertext_buf;
+	char *extra_buf;
+
+	if (IS_ENCRYPTED(&inode->vfs_inode)) {
+		ciphertext_page = alloc_page(GFP_NOFS);
+		extra_page = alloc_page(GFP_NOFS);
+		if (!ciphertext_page)
+			return -ENOMEM;
+		ciphertext_buf = kmap_local_page(ciphertext_page);
+		extra_buf = kmap_local_page(extra_page);
+	}
+#endif /* CONFIG_FS_ENCRYPTION */
 
 	path = btrfs_alloc_path();
 	if (!path)
 		return -ENOMEM;
 
 	while (len > 0) {
+		const char *data = src + src_offset;
+		/*
+		 * Insert 2K at a time mostly to be friendly for smaller leaf
+		 * size filesystems
+		 */
+		copy_bytes = min_t(u64, len, 2048);
+		pr_err("Writing blob is len %llu starts with %25ph", copy_bytes, data);
+
+#ifdef CONFIG_FS_ENCRYPTION
+		if (ciphertext_page) {
+			struct btrfs_fs_info *fs_info = inode->root->fs_info;
+			u64 lblk_num = offset >> fs_info->sectorsize_bits;
+
+			memset(ciphertext_buf, 0, PAGE_SIZE);
+			//memcpy(ciphertext_buf, data, copy_bytes);
+			copy_bytes = ALIGN(copy_bytes,
+					   FSCRYPT_CONTENTS_ALIGNMENT);
+			ret = fscrypt_crypt_block(&inode->vfs_inode, FS_ENCRYPT, 0, ciphertext_page, extra_page,
+							    copy_bytes, 0,
+							    GFP_NOFS);
+			if (ret)
+				break;
+			data = ciphertext_buf;
+			pr_err("Post-enc blob is len %llu offset %llu starts with %25ph", copy_bytes, offset, extra_buf);
+			ret = fscrypt_crypt_block(&inode->vfs_inode, FS_DECRYPT, 0, extra_page, ciphertext_page,
+							    copy_bytes, 0,
+							    GFP_NOFS);
+
+			pr_err("Post-dec blob is len %llu offset %llu starts with %25ph", copy_bytes, offset, data);
+			ret = fscrypt_encrypt_block_inplace(&inode->vfs_inode,
+							    ciphertext_page,
+							    copy_bytes, 0,
+							    lblk_num,
+							    GFP_NOFS);
+			pr_err("Post-reenc blob is len %llu offset %llu starts with %25ph", copy_bytes, offset, data);
+		}
+#endif /* CONFIG_FS_ENCRYPTION */
+
 		/* 1 for the new item being inserted */
 		trans = btrfs_start_transaction(root, 1);
 		if (IS_ERR(trans)) {
@@ -237,12 +291,6 @@ static int write_key_bytes(struct btrfs_inode *inode, u8 key_type, u64 offset,
 		key.type = key_type;
 		key.offset = offset;
 
-		/*
-		 * Insert 2K at a time mostly to be friendly for smaller leaf
-		 * size filesystems
-		 */
-		copy_bytes = min_t(u64, len, 2048);
-
 		ret = btrfs_insert_empty_item(trans, root, path, &key, copy_bytes);
 		if (ret) {
 			btrfs_end_transaction(trans);
@@ -251,18 +299,23 @@ static int write_key_bytes(struct btrfs_inode *inode, u8 key_type, u64 offset,
 
 		leaf = path->nodes[0];
 
-		data = btrfs_item_ptr(leaf, path->slots[0], void);
-		write_extent_buffer(leaf, src + src_offset,
-				    (unsigned long)data, copy_bytes);
+		data_pos = btrfs_item_ptr(leaf, path->slots[0], void);
+		write_extent_buffer(leaf, data,
+				    (unsigned long)data_pos, copy_bytes);
 		offset += copy_bytes;
 		src_offset += copy_bytes;
-		len -= copy_bytes;
+		len -= min_t(u64, copy_bytes, len);
 
 		btrfs_release_path(path);
 		btrfs_end_transaction(trans);
 	}
 
 	btrfs_free_path(path);
+	if (ciphertext_page) {
+		kunmap_local(ciphertext_buf);
+		__free_page(ciphertext_page);
+	}
+
 	return ret;
 }
 
@@ -304,6 +357,18 @@ static int read_key_bytes(struct btrfs_inode *inode, u8 key_type, u64 offset,
 	void *data;
 	char *kaddr = dest;
 	int ret;
+#ifdef CONFIG_FS_ENCRYPTION
+	char *ciphertext_buf;
+	struct page *ciphertext_page;
+
+	if (dest && IS_ENCRYPTED(&inode->vfs_inode)) {
+		ciphertext_page = alloc_page(GFP_NOFS);
+		if (!ciphertext_page) {
+			return -ENOMEM;
+		}
+		ciphertext_buf = kmap_local_page(ciphertext_page);
+	}
+#endif /* CONFIG_FS_ENCRYPTION */
 
 	path = btrfs_alloc_path();
 	if (!path)
@@ -365,14 +430,40 @@ static int read_key_bytes(struct btrfs_inode *inode, u8 key_type, u64 offset,
 		/* Offset from the start of item for copying */
 		copy_offset = offset - key.offset;
 
+		data = btrfs_item_ptr(leaf, path->slots[0], void);
 		if (dest) {
+#ifdef CONFIG_FS_ENCRYPTION
+			if (ciphertext_page) {
+				struct btrfs_fs_info *fs_info =
+					inode->root->fs_info;
+				u64 lblk_num = offset >> fs_info->sectorsize_bits;
+				read_extent_buffer(leaf, ciphertext_buf,
+						   (unsigned long)data + copy_offset,
+						   item_end - offset);
+				pr_err("Read enc blob of len %u offset %u item_end %u start %25ph", item_end - offset, offset, item_end, ciphertext_buf);
+				ret = fscrypt_decrypt_block_inplace(&inode->vfs_inode,
+								    ciphertext_page,
+								    item_end - offset, 0,
+								    lblk_num);
+				if (ret)
+					break;
+			}
+#endif /* CONFIG_FS_ENCRYPTION */
+
 			if (dest_page)
 				kaddr = kmap_local_page(dest_page);
 
-			data = btrfs_item_ptr(leaf, path->slots[0], void);
-			read_extent_buffer(leaf, kaddr + dest_offset,
-					   (unsigned long)data + copy_offset,
-					   copy_bytes);
+			if (IS_ENABLED(CONFIG_FS_ENCRYPTION) &&
+			    IS_ENCRYPTED(&inode->vfs_inode)) {
+#ifdef CONFIG_FS_ENCRYPTION
+				memcpy(kaddr + dest_offset, ciphertext_buf + copy_offset, copy_bytes);
+				pr_err("Decrypted blob len %u start %25ph", copy_bytes, kaddr+dest_offset);
+#endif /* CONFIG_FS_ENCRYPTION */
+			} else {
+				read_extent_buffer(leaf, kaddr + dest_offset,
+						   (unsigned long)data + copy_offset,
+						   copy_bytes);
+			}
 
 			if (dest_page)
 				kunmap_local(kaddr);
@@ -399,6 +490,12 @@ static int read_key_bytes(struct btrfs_inode *inode, u8 key_type, u64 offset,
 		}
 	}
 out:
+#ifdef CONFIG_FS_ENCRYPTION
+	if (ciphertext_page) {
+		kunmap_local(ciphertext_buf);
+		__free_page(ciphertext_page);
+	}
+#endif /* CONFIG_FS_ENCRYPTION */
 	btrfs_free_path(path);
 	if (!ret)
 		ret = copied;

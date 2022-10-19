@@ -95,6 +95,7 @@ void fscrypt_generate_iv(union fscrypt_iv *iv, u64 lblk_num,
 		WARN_ON_ONCE(ret);
 		memcpy(iv->raw, ctx.v1.iv.raw, sizeof(*iv));
 		iv->lblk_num += cpu_to_le64(extent_offset);
+		pr_err("for ino %lu lblk %lu offset %u %32ph", inode->i_ino, lblk_num, extent_offset, iv->raw);
 		return;
 	}
 
@@ -132,6 +133,7 @@ int fscrypt_crypt_block(const struct inode *inode, fscrypt_direction_t rw,
 	struct crypto_skcipher *tfm = ci->ci_enc_key.tfm;
 	int res = 0;
 
+	WARN_ON_ONCE(ci == NULL);
 	if (WARN_ON_ONCE(len <= 0))
 		return -EINVAL;
 	if (WARN_ON_ONCE(len % FSCRYPT_CONTENTS_ALIGNMENT != 0))
@@ -164,6 +166,7 @@ int fscrypt_crypt_block(const struct inode *inode, fscrypt_direction_t rw,
 	}
 	return 0;
 }
+EXPORT_SYMBOL(fscrypt_crypt_block);
 
 /**
  * fscrypt_encrypt_pagecache_blocks() - Encrypt filesystem blocks from a

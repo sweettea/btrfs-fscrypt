@@ -326,7 +326,16 @@ static inline bool fscrypt_is_nokey_name(const struct dentry *dentry)
 }
 
 /* crypto.c */
+typedef enum {
+	FS_DECRYPT = 0,
+	FS_ENCRYPT,
+} fscrypt_direction_t;
+
 void fscrypt_enqueue_decrypt_work(struct work_struct *);
+int fscrypt_crypt_block(const struct inode *inode, fscrypt_direction_t rw,
+			u64 lblk_num, struct page *src_page,
+			struct page *dest_page, unsigned int len,
+			unsigned int offs, gfp_t gfp_flags);
 
 struct page *fscrypt_encrypt_pagecache_blocks(struct page *page,
 					      unsigned int len,

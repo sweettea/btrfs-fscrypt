@@ -257,18 +257,9 @@ struct fscrypt_info {
 	u32 ci_hashed_ino;
 };
 
-typedef enum {
-	FS_DECRYPT = 0,
-	FS_ENCRYPT,
-} fscrypt_direction_t;
-
 /* crypto.c */
 extern struct kmem_cache *fscrypt_info_cachep;
 int fscrypt_initialize(unsigned int cop_flags);
-int fscrypt_crypt_block(const struct inode *inode, fscrypt_direction_t rw,
-			u64 lblk_num, struct page *src_page,
-			struct page *dest_page, unsigned int len,
-			unsigned int offs, gfp_t gfp_flags);
 struct page *fscrypt_alloc_bounce_page(gfp_t gfp_flags);
 
 void __printf(3, 4) __cold
