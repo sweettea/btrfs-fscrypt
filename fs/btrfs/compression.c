@@ -142,6 +142,21 @@ static void finish_compressed_bio_read(struct compressed_bio *cb)
 {
 	unsigned int index;
 	struct page *page;
+	if (fscrypt_inode_uses_fs_layer_crypto(inode)) {
+		struct bio_vec *bvec;
+		struct bvec_iter_all iter_all;
+
+		bio_for_each_segment_all(bvec, bio, iter_all) {
+			struct page *page = bvec->bv_page;
+			struct inode *inode = page->mapping->host;
+			int ret = fscrypt_decrypt_pagecache_blocks(page,
+								   bvec->bv_len,
+								   bvec->bv_offset);
+			if (ret) {
+				// YOLO
+			}
+		}
+	}
 
 	if (cb->status == BLK_STS_OK)
 		cb->status = errno_to_blk_status(btrfs_decompress_bio(cb));
@@ -410,6 +425,22 @@ blk_status_t btrfs_submit_compressed_write(struct btrfs_inode *inode, u64 start,
 
 	if (blkcg_css)
 		kthread_associate_blkcg(blkcg_css);
+
+	if (fscrypt_inode_uses_fs_layer_crypto(&inode->vfs_inode)) {
+		gfp_t gfp_flags;
+		u64 lblk_num = cb->start >> fs_info->sectorsize_bits;
+
+		if (bio)
+			gfp_flags = GFP_NOWAIT | __GFP_NOWARN;
+		else
+			gfp_flags = GFP_NOFS;
+		// XXX deal with retval, deal with incomplete final page.
+		for (int i = 0; i < nr_pages; i++) {
+			ret = fscrypt_encrypt_block_inplace(&inode->vfs_inode,
+				compressed_pages[i], PAGE_SIZE, 0,
+				lblk_num + i, gfp_flags);
+		}
+	}
 
 	while (cur_disk_bytenr < disk_start + compressed_len) {
 		u64 offset = cur_disk_bytenr - disk_start;

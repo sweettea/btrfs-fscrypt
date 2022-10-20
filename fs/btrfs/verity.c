@@ -260,14 +260,18 @@ static int write_key_bytes(struct btrfs_inode *inode, u8 key_type, u64 offset,
 			copy_bytes = ALIGN(copy_bytes,
 					   FSCRYPT_CONTENTS_ALIGNMENT);
 			ret = fscrypt_crypt_block(&inode->vfs_inode, FS_ENCRYPT, 0, ciphertext_page, extra_page,
-							    copy_bytes, 0,
+							    PAGE_SIZE, 0,
 							    GFP_NOFS);
 			if (ret)
 				break;
 			data = ciphertext_buf;
 			pr_err("Post-enc blob is len %llu offset %llu starts with %25ph", copy_bytes, offset, extra_buf);
+			ret = fscrypt_crypt_block(&inode->vfs_inode, FS_ENCRYPT, 0, ciphertext_page, extra_page,
+							    PAGE_SIZE, 0,
+							    GFP_NOFS);
+			pr_err("Post-enc2 blob is len %llu offset %llu starts with %25ph", copy_bytes, offset, extra_buf);
 			ret = fscrypt_crypt_block(&inode->vfs_inode, FS_DECRYPT, 0, extra_page, ciphertext_page,
-							    copy_bytes, 0,
+							    PAGE_SIZE, 0,
 							    GFP_NOFS);
 
 			pr_err("Post-dec blob is len %llu offset %llu starts with %25ph", copy_bytes, offset, data);
