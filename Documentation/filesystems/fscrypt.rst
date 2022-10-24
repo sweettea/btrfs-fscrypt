@@ -41,10 +41,10 @@ causing application compatibility issues; fscrypt allows the full 255
 bytes (NAME_MAX).  Finally, unlike eCryptfs, the fscrypt API can be
 used by unprivileged users, with no need to mount anything.
 
-fscrypt does not support encrypting files in-place.  Instead, it
-supports marking an empty directory as encrypted.  Then, after
-userspace provides the key, all regular files, directories, and
-symbolic links created in that directory tree are transparently
+For most filesystems, fscrypt does not support encrypting files
+in-place.  Instead, it supports marking an empty directory as encrypted.
+Then, after userspace provides the key, all regular files, directories,
+and symbolic links created in that directory tree are transparently
 encrypted.
 
 Threat model
@@ -544,19 +544,28 @@ This structure must be initialized as follows:
   struct fscrypt_policy_v2.
 
 If the file is not yet encrypted, then FS_IOC_SET_ENCRYPTION_POLICY
-verifies that the file is an empty directory.  If so, the specified
-encryption policy is assigned to the directory, turning it into an
-encrypted directory.  After that, and after providing the
-corresponding master key as described in `Adding keys`_, all regular
-files, directories (recursively), and symlinks created in the
-directory will be encrypted, inheriting the same encryption policy.
-The filenames in the directory's entries will be encrypted as well.
+verifies that the file is an empty directory, unless btrfs is being
+used.  If so, the specified encryption policy is assigned to the
+directory, turning it into an encrypted directory.  After that, and
+after providing the corresponding master key as described in `Adding
+keys`_, all regular files, directories (recursively), and symlinks
+created in the directory will be encrypted, inheriting the same
+encryption policy.  The filenames in the directory's entries will be
+encrypted as well.
 
 Alternatively, if the file is already encrypted, then
 FS_IOC_SET_ENCRYPTION_POLICY validates that the specified encryption
 policy exactly matches the actual one.  If they match, then the ioctl
 returns 0.  Otherwise, it fails with EEXIST.  This works on both
 regular files and directories, including nonempty directories.
+
+Note that btrfs permits setting a currently unencrypted 'subvolume' to
+encrypted. This means all newly written data, and files, will be
+encrypted, but existing data and filenames will remain unencrypted. This
+is intended for use in containers: initially identical unencrypted
+snapshot volumes provide the base for multiple containers' filesystems,
+but after each encrypts their volume with a different key, any new
+sensitive data written by the container will be encrypted.
 
 When a v2 encryption policy is assigned to a directory, it is also
 required that either the specified key has been added by the current
