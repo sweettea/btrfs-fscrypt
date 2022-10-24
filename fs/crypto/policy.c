@@ -91,6 +91,10 @@ static bool supported_direct_key_modes(const struct inode *inode,
 {
 	const struct fscrypt_mode *mode;
 
+	/* Extent-based encryption allows any mixed mode and IV size */
+	if (inode->i_sb->s_cop->get_extent_context)
+		return true;
+
 	if (contents_mode != filenames_mode) {
 		fscrypt_warn(inode,
 			     "Direct key flag not allowed with different contents and filenames modes");

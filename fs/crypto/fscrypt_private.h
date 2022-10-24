@@ -292,7 +292,6 @@ union fscrypt_iv {
 	__le64 dun[FSCRYPT_MAX_IV_SIZE / sizeof(__le64)];
 };
 
-
 /*
  * fscrypt_extent_context - the encryption context for an extent
  *
@@ -304,14 +303,13 @@ union fscrypt_iv {
  */
 struct fscrypt_extent_context_v1 {
 	u8 version;
-	union fscrypt_iv iv;
+	u8 nonce[FSCRYPT_FILE_NONCE_SIZE];
 } __packed;
 
 union fscrypt_extent_context {
 	u8 version;
 	struct fscrypt_extent_context_v1 v1;
 };
-
 
 void fscrypt_generate_iv(union fscrypt_iv *iv, u64 lblk_num,
 			 const struct fscrypt_info *ci);
