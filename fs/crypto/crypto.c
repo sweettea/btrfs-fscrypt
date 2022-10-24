@@ -93,8 +93,19 @@ void fscrypt_generate_iv(union fscrypt_iv *iv, u64 lblk_num,
 		ret = fscrypt_get_extent_context(inode, lblk_num, &ctx,
 						 &extent_offset, NULL);
 		WARN_ON_ONCE(ret);
-		memcpy(iv->raw, ctx.v1.iv.raw, sizeof(*iv));
-		iv->lblk_num += cpu_to_le64(extent_offset);
+		if (ci->ci_mode->ivsize < offsetofend(union fscrypt_iv, nonce)) {
+			/*
+			 *  We need a 16 byte IV, but our nonce is 16 bytes.
+			 *  Copy to the start of the buffer and add the extent
+			 *  offset manually.
+			 */
+			memcpy(iv->raw, ctx.v1.nonce, FSCRYPT_FILE_NONCE_SIZE);
+			iv->lblk_num = cpu_to_le64(extent_offset +
+						   le64_to_cpu(iv->lblk_num));
+			return;
+		}
+		memcpy(iv->nonce, ctx.v1.nonce, FSCRYPT_FILE_NONCE_SIZE);
+		iv->lblk_num = cpu_to_le64(extent_offset);
 		return;
 	}
 
