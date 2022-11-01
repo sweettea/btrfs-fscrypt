@@ -1216,6 +1216,28 @@ out:
 	return ret;
 }
 
+static void load_encryption_context(struct extent_buffer *leaf,
+				    const struct btrfs_path *path,
+				    struct btrfs_file_extent_item *fi,
+				    struct extent_map *em)
+{
+	u8 ctxsize = btrfs_file_extent_ctxsize_from_item(leaf, path);
+	ASSERT(ctxsize == btrfs_file_extent_encryption_ctxsize(leaf, fi));
+
+	if (btrfs_file_extent_encryption(leaf, fi))
+		set_bit(EXTENT_FLAG_ENCRYPTED, &em->flags);
+
+#ifdef CONFIG_FS_ENCRYPTION
+	em->fscrypt_context.len = ctxsize;
+
+	if (em->block_start == EXTENT_MAP_INLINE)
+		// TODO reaqd from a different place
+	read_extent_buffer(leaf, em->fscrypt_context.buffer,
+			   (unsigned long)fi->fscrypt_context,
+			   ctxsize);
+#endif /* CONFIG_FS_ENCRYPTION */
+}
+
 void btrfs_extent_item_to_extent_map(struct btrfs_inode *inode,
 				     const struct btrfs_path *path,
 				     struct btrfs_file_extent_item *fi,
@@ -1238,7 +1260,6 @@ void btrfs_extent_item_to_extent_map(struct btrfs_inode *inode,
 	em->generation = btrfs_file_extent_generation(leaf, fi);
 	if (type == BTRFS_FILE_EXTENT_REG ||
 	    type == BTRFS_FILE_EXTENT_PREALLOC) {
-		u8 ctxsize;
 		em->start = extent_start;
 		em->len = extent_end - extent_start;
 		em->orig_start = extent_start -
@@ -1252,30 +1273,15 @@ void btrfs_extent_item_to_extent_map(struct btrfs_inode *inode,
 		if (compress_type != BTRFS_COMPRESS_NONE) {
 			set_bit(EXTENT_FLAG_COMPRESSED, &em->flags);
 			em->compress_type = compress_type;
-			em->block_start = bytenr;
-			em->block_len = em->orig_block_len;
-		} else if (btrfs_file_extent_encryption(leaf, fi)) {
-			set_bit(EXTENT_FLAG_ENCRYPTED, &em->flags);
-			em->block_start = bytenr;
 			em->block_len = em->orig_block_len;
 		} else {
 			bytenr += btrfs_file_extent_offset(leaf, fi);
-			em->block_start = bytenr;
 			em->block_len = em->len;
 			if (type == BTRFS_FILE_EXTENT_PREALLOC)
 				set_bit(EXTENT_FLAG_PREALLOC, &em->flags);
 		}
-
-		ctxsize = btrfs_file_extent_ctxsize_from_item(leaf, path);
-		ASSERT(ctxsize == btrfs_file_extent_encryption_ctxsize(leaf, fi));
-
-#ifdef CONFIG_FS_ENCRYPTION
-		em->fscrypt_context.len = ctxsize;
-
-		read_extent_buffer(leaf, em->fscrypt_context.buffer,
-				   (unsigned long)fi->fscrypt_context,
-				   ctxsize);
-#endif /* CONFIG_FS_ENCRYPTION */
+		em->block_start = bytenr;
+		load_encryption_context(leaf, path, fi, em);
 	} else if (type == BTRFS_FILE_EXTENT_INLINE) {
 		em->block_start = EXTENT_MAP_INLINE;
 		em->start = extent_start;
@@ -1289,6 +1295,7 @@ void btrfs_extent_item_to_extent_map(struct btrfs_inode *inode,
 		em->compress_type = compress_type;
 		if (compress_type != BTRFS_COMPRESS_NONE)
 			set_bit(EXTENT_FLAG_COMPRESSED, &em->flags);
+		load_encryption_context(leaf, path, fi, em);
 	} else {
 		btrfs_err(fs_info,
 			  "unknown file extent item type %d, inode %llu, offset %llu, "
