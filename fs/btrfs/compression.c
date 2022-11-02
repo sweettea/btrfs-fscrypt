@@ -202,6 +202,16 @@ static void end_compressed_bio_read(struct btrfs_bio *bbio)
 				status = errno_to_blk_status(ret);
 			}
 		}
+		if (fscrypt_inode_uses_fs_layer_crypto(inode)) {
+			int err;
+			u64 lblk_num = start >> fs_info->sectorsize_bits;
+			err = fscrypt_decrypt_block_inplace(inode, bv.bv_page,
+							    fs_info->sectorsize,
+							    bv.bv_offset,
+							    lblk_num);
+			if (err)
+				status = errno_to_blk_status(err);
+		}
 	}
 
 	if (status)
@@ -450,6 +460,19 @@ blk_status_t btrfs_submit_compressed_write(struct btrfs_inode *inode, u64 start,
 		real_size = min_t(u64, real_size, PAGE_SIZE - offset_in_page(offset));
 		real_size = min_t(u64, real_size, compressed_len - offset);
 		ASSERT(IS_ALIGNED(real_size, fs_info->sectorsize));
+
+		if (fscrypt_inode_uses_fs_layer_crypto(&inode->vfs_inode)) {
+			int err;
+			u64 lblk_num = start >> fs_info->sectorsize_bits;
+
+			err = fscrypt_encrypt_block_inplace(&inode->vfs_inode,
+							    page, real_size, 0,
+							    lblk_num, GFP_NOFS);
+			if (err) {
+				ret = errno_to_blk_status(err);
+				break;
+			}
+		}
 
 		if (use_append)
 			added = bio_add_zone_append_page(bio, page, real_size,
