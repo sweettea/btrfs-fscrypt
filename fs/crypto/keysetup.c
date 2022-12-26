@@ -706,7 +706,7 @@ EXPORT_SYMBOL_GPL(fscrypt_prepare_new_inode);
  */
 void fscrypt_put_encryption_info(struct inode *inode)
 {
-	put_crypt_info(fscrypt_get_info(inode));
+	put_crypt_info(fscrypt_get_inode_info(inode));
 	inode->i_crypt_info = NULL;
 }
 EXPORT_SYMBOL(fscrypt_put_encryption_info);
@@ -739,7 +739,7 @@ EXPORT_SYMBOL(fscrypt_free_inode);
  */
 int fscrypt_drop_inode(struct inode *inode)
 {
-	const struct fscrypt_info *ci = fscrypt_get_info(inode);
+	const struct fscrypt_info *ci = fscrypt_get_inode_info(inode);
 
 	/*
 	 * If ci is NULL, then the inode doesn't have an encryption key set up

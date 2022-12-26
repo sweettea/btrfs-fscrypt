@@ -100,7 +100,7 @@ int fscrypt_fname_encrypt(const struct inode *inode, const struct qstr *iname,
 {
 	struct skcipher_request *req = NULL;
 	DECLARE_CRYPTO_WAIT(wait);
-	const struct fscrypt_info *ci = fscrypt_get_info(inode);
+	const struct fscrypt_info *ci = fscrypt_get_inode_info(inode);
 	struct crypto_skcipher *tfm = ci->ci_enc_key.tfm;
 	union fscrypt_iv iv;
 	struct scatterlist sg;
@@ -157,7 +157,7 @@ static int fname_decrypt(const struct inode *inode,
 	struct skcipher_request *req = NULL;
 	DECLARE_CRYPTO_WAIT(wait);
 	struct scatterlist src_sg, dst_sg;
-	const struct fscrypt_info *ci = fscrypt_get_info(inode);
+	const struct fscrypt_info *ci = fscrypt_get_inode_info(inode);
 	struct crypto_skcipher *tfm = ci->ci_enc_key.tfm;
 	union fscrypt_iv iv;
 	int res;
@@ -299,7 +299,7 @@ bool __fscrypt_fname_encrypted_size(const union fscrypt_policy *policy,
 bool fscrypt_fname_encrypted_size(const struct inode *inode, u32 orig_len,
 				  u32 max_len, u32 *encrypted_len_ret)
 {
-	struct fscrypt_info *ci = fscrypt_get_info(inode);
+	struct fscrypt_info *ci = fscrypt_get_inode_info(inode);
 	return __fscrypt_fname_encrypted_size(&ci->ci_policy,
 					      orig_len, max_len,
 					      encrypted_len_ret);
@@ -569,7 +569,7 @@ EXPORT_SYMBOL_GPL(fscrypt_match_name);
  */
 u64 fscrypt_fname_siphash(const struct inode *dir, const struct qstr *name)
 {
-	const struct fscrypt_info *ci = fscrypt_get_info(dir);
+	const struct fscrypt_info *ci = fscrypt_get_inode_info(dir);
 
 	WARN_ON(!ci->ci_dirhash_key_initialized);
 
