@@ -515,6 +515,38 @@ static void put_crypt_info(struct fscrypt_info *ci)
 	kmem_cache_free(fscrypt_info_cachep, ci);
 }
 
+static bool fscrypt_set_inode_info(struct inode *inode,
+				   struct fscrypt_info *ci,
+				   struct fscrypt_master_key *mk)
+{
+	if (ci == NULL) {
+		inode->i_crypt_info = NULL;
+		return true;
+	}
+
+	/*
+	 * For existing inodes, multiple tasks may race to set ->i_crypt_info.
+	 * So use cmpxchg_release().  This pairs with the smp_load_acquire() in
+	 * fscrypt_get_info().  I.e., here we publish ->i_crypt_info with a
+	 * RELEASE barrier so that other tasks can ACQUIRE it.
+	 */
+	if (cmpxchg_release(&inode->i_crypt_info, NULL, ci) != NULL)
+		return false;
+
+	/*
+	 * We won the race and set ->i_crypt_info to our crypt_info.
+	 * Now link it into the master key's inode list.
+	 */
+	if (mk) {
+		ci->ci_master_key = mk;
+		refcount_inc(&mk->mk_active_refs);
+		spin_lock(&mk->mk_decrypted_inodes_lock);
+		list_add(&ci->ci_master_key_link, &mk->mk_decrypted_inodes);
+		spin_unlock(&mk->mk_decrypted_inodes_lock);
+	}
+	return true;
+}
+
 static int
 fscrypt_setup_encryption_info(struct inode *inode,
 			      const union fscrypt_policy *policy,
@@ -525,6 +557,7 @@ fscrypt_setup_encryption_info(struct inode *inode,
 	struct fscrypt_mode *mode;
 	struct fscrypt_master_key *mk = NULL;
 	int res;
+	bool set_succeeded;
 
 	res = fscrypt_initialize(inode->i_sb->s_cop->flags);
 	if (res)
@@ -550,34 +583,15 @@ fscrypt_setup_encryption_info(struct inode *inode,
 	if (res)
 		goto out;
 
-	/*
-	 * For existing inodes, multiple tasks may race to set ->i_crypt_info.
-	 * So use cmpxchg_release().  This pairs with the smp_load_acquire() in
-	 * fscrypt_get_info().  I.e., here we publish ->i_crypt_info with a
-	 * RELEASE barrier so that other tasks can ACQUIRE it.
-	 */
-	if (cmpxchg_release(&inode->i_crypt_info, NULL, crypt_info) == NULL) {
-		/*
-		 * We won the race and set ->i_crypt_info to our crypt_info.
-		 * Now link it into the master key's inode list.
-		 */
-		if (mk) {
-			crypt_info->ci_master_key = mk;
-			refcount_inc(&mk->mk_active_refs);
-			spin_lock(&mk->mk_decrypted_inodes_lock);
-			list_add(&crypt_info->ci_master_key_link,
-				 &mk->mk_decrypted_inodes);
-			spin_unlock(&mk->mk_decrypted_inodes_lock);
-		}
-		crypt_info = NULL;
-	}
+	set_succeeded = fscrypt_set_inode_info(inode, crypt_info, mk);
 	res = 0;
 out:
 	if (mk) {
 		up_read(&mk->mk_sem);
 		fscrypt_put_master_key(mk);
 	}
-	put_crypt_info(crypt_info);
+	if (!set_succeeded)
+		put_crypt_info(crypt_info);
 	return res;
 }
 
@@ -707,7 +721,7 @@ EXPORT_SYMBOL_GPL(fscrypt_prepare_new_inode);
 void fscrypt_put_encryption_info(struct inode *inode)
 {
 	put_crypt_info(fscrypt_get_inode_info(inode));
-	inode->i_crypt_info = NULL;
+	fscrypt_set_inode_info(inode, NULL, NULL);
 }
 EXPORT_SYMBOL(fscrypt_put_encryption_info);
 
