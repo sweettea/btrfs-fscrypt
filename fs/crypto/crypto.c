@@ -107,8 +107,9 @@ int fscrypt_crypt_block(const struct inode *inode, fscrypt_direction_t rw,
 	struct skcipher_request *req = NULL;
 	DECLARE_CRYPTO_WAIT(wait);
 	struct scatterlist dst, src;
-	struct fscrypt_info *ci = fscrypt_get_lblk_info(inode, lblk_num, NULL,
-							NULL);
+	u64 ci_offset = 0;
+	struct fscrypt_info *ci = fscrypt_get_lblk_info(inode, lblk_num,
+						        &ci_offset, NULL);
 	struct crypto_skcipher *tfm = ci->ci_enc_key.tfm;
 	int res = 0;
 
@@ -117,7 +118,7 @@ int fscrypt_crypt_block(const struct inode *inode, fscrypt_direction_t rw,
 	if (WARN_ON_ONCE(len % FSCRYPT_CONTENTS_ALIGNMENT != 0))
 		return -EINVAL;
 
-	fscrypt_generate_iv(&iv, lblk_num, ci);
+	fscrypt_generate_iv(&iv, ci_offset, ci);
 
 	req = skcipher_request_alloc(tfm, gfp_flags);
 	if (!req)
