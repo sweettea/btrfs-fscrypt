@@ -622,6 +622,22 @@ int fscrypt_get_encryption_info(struct inode *inode, bool allow_unsupported)
 	if (fscrypt_has_encryption_key(inode))
 		return 0;
 
+	if (fscrypt_uses_extent_encryption(inode)) {
+		struct dentry *dentry = d_find_any_alias(inode);
+		struct dentry *parent_dentry = dget_parent(dentry);
+		struct inode *dir = parent_dentry->d_inode;
+		struct fscrypt_info *dir_info = fscrypt_get_inode_info(dir);
+		struct fscrypt_master_key *mk = NULL;
+
+		if (dir_info)
+			mk = dir_info->ci_master_key;
+
+		fscrypt_set_inode_info(inode, dir_info, mk);
+		dput(parent_dentry);
+		dput(dentry);
+		return 0;
+	}
+
 	res = inode->i_sb->s_cop->get_context(inode, &ctx, sizeof(ctx));
 	if (res < 0) {
 		if (res == -ERANGE && allow_unsupported)
@@ -704,6 +720,14 @@ int fscrypt_prepare_new_inode(struct inode *dir, struct inode *inode,
 
 	*encrypt_ret = true;
 
+	if (fscrypt_uses_extent_encryption(inode)) {
+		struct fscrypt_info *dir_info = fscrypt_get_inode_info(dir);
+
+		fscrypt_set_inode_info(inode, dir_info,
+				       dir_info->ci_master_key);
+		return 0;
+	}
+
 	get_random_bytes(nonce, FSCRYPT_FILE_NONCE_SIZE);
 	return fscrypt_setup_encryption_info(inode, policy, nonce,
 					     IS_CASEFOLDED(dir) &&
@@ -720,7 +744,8 @@ EXPORT_SYMBOL_GPL(fscrypt_prepare_new_inode);
  */
 void fscrypt_put_encryption_info(struct inode *inode)
 {
-	put_crypt_info(fscrypt_get_inode_info(inode));
+	if (!fscrypt_uses_extent_encryption(inode))
+		put_crypt_info(fscrypt_get_inode_info(inode));
 	fscrypt_set_inode_info(inode, NULL, NULL);
 }
 EXPORT_SYMBOL(fscrypt_put_encryption_info);

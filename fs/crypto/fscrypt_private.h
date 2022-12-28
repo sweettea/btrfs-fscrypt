@@ -263,6 +263,24 @@ typedef enum {
 } fscrypt_direction_t;
 
 /**
+ * fscrypt_uses_extent_encryption() -- whether an inode uses per-extent
+ *                                     encryption
+ *
+ * @param inode	 the inode in question
+ *
+ * Return: true if the inode uses per-extent encryption infos, false otherwise
+ */
+static inline bool fscrypt_uses_extent_encryption(const struct inode *inode)
+{
+	// Non-regular files don't have extents
+	if (!S_ISREG(inode->i_mode))
+		return false;
+
+	// No filesystem currently uses per-extent infos
+	return false;
+}
+
+/**
  * fscrypt_get_inode_info() - get the fscrypt_info for a particular inode
  *
  * @inode: the inode in question
