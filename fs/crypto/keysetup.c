@@ -334,9 +334,9 @@ static int fscrypt_setup_v2_file_key(struct fscrypt_info *ci,
 		   FSCRYPT_POLICY_FLAG_IV_INO_LBLK_64) {
 		/*
 		 * IV_INO_LBLK_64: encryption keys are derived from (master_key,
-		 * mode_num, filesystem_uuid), and inode number is included in
-		 * the IVs.  This format is optimized for use with inline
-		 * encryption hardware compliant with the UFS standard.
+		 * mode_num, filesystem_uuid), and inode/extent number is
+		 * included in the IVs.  This format is optimized for use with
+		 * inline encryption hardware compliant with the UFS standard.
 		 */
 		err = setup_per_mode_enc_key(ci, mk, mk->mk_iv_ino_lblk_64_keys,
 					     HKDF_CONTEXT_IV_INO_LBLK_64_KEY,

@@ -876,7 +876,7 @@ static void shrink_dcache_inode(struct inode *inode)
 	d_prune_aliases(inode);
 }
 
-static void evict_dentries_for_decrypted_inodes(struct fscrypt_master_key *mk)
+static void evict_dentries_for_decrypted_objects(struct fscrypt_master_key *mk)
 {
 	struct fscrypt_info *ci;
 	struct inode *inode;
@@ -970,12 +970,14 @@ static int try_to_lock_encrypted_files(struct super_block *sb,
 	 * Inodes are pinned by their dentries, so we have to evict their
 	 * dentries.  shrink_dcache_sb() would suffice, but would be overkill
 	 * and inappropriate for use by unprivileged users.  So instead go
-	 * through the inodes' alias lists and try to evict each dentry.
+	 * through the inodes' alias lists and try to evict each dentry. Also,
+	 * for extent-based encryption, notify the filesystem that it must free
+	 * all the infos for extents using this key.
 	 */
-	evict_dentries_for_decrypted_inodes(mk);
+	evict_dentries_for_decrypted_objects(mk);
 
 	/*
-	 * evict_dentries_for_decrypted_inodes() already iput() each inode in
+	 * evict_dentries_for_decrypted_objects() already iput() each inode in
 	 * the list; any inodes for which that dropped the last reference will
 	 * have been evicted due to fscrypt_drop_inode() detecting the key
 	 * removal and telling the VFS to evict the inode.  So to finish, we
@@ -995,14 +997,14 @@ static int try_to_lock_encrypted_files(struct super_block *sb,
  * key itself.
  *
  * To "remove the key itself", first we wipe the actual master key secret, so
- * that no more inodes can be unlocked with it.  Then we try to evict all cached
- * inodes that had been unlocked with the key.
+ * that nothing else can be unlocked with it.  Then we try to evict all cached
+ * inodes and extents that had been unlocked with the key.
  *
- * If all inodes were evicted, then we unlink the fscrypt_master_key from the
- * keyring.  Otherwise it remains in the keyring in the "incompletely removed"
- * state (without the actual secret key) where it tracks the list of remaining
- * inodes.  Userspace can execute the ioctl again later to retry eviction, or
- * alternatively can re-add the secret key again.
+ * If all were evicted, then we unlink the fscrypt_master_key from the keyring.
+ * Otherwise it remains in the keyring in the "incompletely removed" state
+ * (without the actual secret key) where it tracks the list of remaining inodes
+ * and extents.  Userspace can execute the ioctl again later to retry eviction,
+ * or alternatively can re-add the secret key again.
  *
  * For more details, see the "Removing keys" section of
  * Documentation/filesystems/fscrypt.rst.

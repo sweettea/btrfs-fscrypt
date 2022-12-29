@@ -344,8 +344,9 @@ EXPORT_SYMBOL_GPL(fscrypt_set_bio_crypt_ctx_bh);
  * fscrypt_set_bio_crypt_ctx() must have already been called on the bio.
  *
  * This function isn't required in cases where crypto-mergeability is ensured in
- * another way, such as I/O targeting only a single file (and thus a single key)
- * combined with fscrypt_limit_io_blocks() to ensure DUN contiguity.
+ * another way, such as I/O targeting only a single file combined with
+ * fscrypt_limit_io_blocks() to ensure DUN contiguity (which also ensures,
+ * for extent-based encryption, that the I/O doesn't span extents).
  *
  * Return: true iff the I/O is mergeable
  */
@@ -458,7 +459,9 @@ EXPORT_SYMBOL_GPL(fscrypt_dio_supported);
  * DUN to wrap around within logically contiguous blocks, and that wraparound
  * will occur.  If this happens, a value less than @nr_blocks will be returned
  * so that the wraparound doesn't occur in the middle of a bio, which would
- * cause encryption/decryption to produce wrong results.
+ * cause encryption/decryption to produce wrong results. Similarly, the
+ * filesystem could be using extent-based encryption, which will return a value
+ * less than @nr_blocks if needed to prevent spanning multiple extents.
  *
  * Return: the actual number of blocks that can be submitted
  */
