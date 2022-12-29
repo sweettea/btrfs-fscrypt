@@ -41,7 +41,7 @@ static struct block_device **fscrypt_get_devices(struct super_block *sb,
 
 static unsigned int fscrypt_get_dun_bytes(const struct fscrypt_info *ci)
 {
-	struct super_block *sb = ci->ci_inode->i_sb;
+	struct super_block *sb = ci->ci_sb;
 	unsigned int flags = fscrypt_policy_flags(&ci->ci_policy);
 	int ino_bits = 64, lblk_bits = 64;
 
@@ -95,7 +95,7 @@ static void fscrypt_log_blk_crypto_impl(struct fscrypt_mode *mode,
 int fscrypt_select_encryption_impl(struct fscrypt_info *ci)
 {
 	const struct inode *inode = ci->ci_inode;
-	struct super_block *sb = inode->i_sb;
+	struct super_block *sb = ci->ci_sb;
 	struct blk_crypto_config crypto_cfg;
 	struct block_device **devs;
 	unsigned int num_devs;
@@ -158,7 +158,7 @@ int fscrypt_prepare_inline_crypt_key(struct fscrypt_prepared_key *prep_key,
 				     const struct fscrypt_info *ci)
 {
 	const struct inode *inode = ci->ci_inode;
-	struct super_block *sb = inode->i_sb;
+	struct super_block *sb = ci->ci_sb;
 	enum blk_crypto_mode_num crypto_mode = ci->ci_mode->blk_crypto_mode;
 	struct blk_crypto_key *blk_key;
 	struct block_device **devs;
