@@ -537,7 +537,7 @@ struct fscrypt_master_key {
 	 * A structural ref only guarantees that the struct continues to exist.
 	 *
 	 * There is one active ref associated with ->mk_secret being present,
-	 * and one active ref for each inode in ->mk_decrypted_inodes.
+	 * and one active ref for each inode in ->mk_active_infos.
 	 *
 	 * There is one structural ref associated with the active refcount being
 	 * nonzero.  Finding a key in the keyring also takes a structural ref,
@@ -551,7 +551,7 @@ struct fscrypt_master_key {
 	/*
 	 * The secret key material.  After FS_IOC_REMOVE_ENCRYPTION_KEY is
 	 * executed, this is wiped and no new inodes can be unlocked with this
-	 * key; however, there may still be inodes in ->mk_decrypted_inodes
+	 * key; however, there may still be inodes in ->mk_active_infos
 	 * which could not be evicted.  As long as some inodes still remain,
 	 * FS_IOC_REMOVE_ENCRYPTION_KEY can be retried, or
 	 * FS_IOC_ADD_ENCRYPTION_KEY can add the secret again.
@@ -587,11 +587,11 @@ struct fscrypt_master_key {
 	struct key		*mk_users;
 
 	/*
-	 * List of inodes that were unlocked using this key.  This allows the
-	 * inodes to be evicted efficiently if the key is removed.
+	 * List of infos that were unlocked using this key.  This allows the
+	 * owning objects to be evicted efficiently if the key is removed.
 	 */
-	struct list_head	mk_decrypted_inodes;
-	spinlock_t		mk_decrypted_inodes_lock;
+	struct list_head	mk_active_infos;
+	spinlock_t		mk_active_infos_lock;
 
 	/*
 	 * Per-mode encryption keys for the various types of encryption policies

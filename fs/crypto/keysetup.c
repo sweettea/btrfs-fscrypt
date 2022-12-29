@@ -414,7 +414,7 @@ static bool fscrypt_valid_master_key_size(const struct fscrypt_master_key *mk,
  *
  * If the master key is found in the filesystem-level keyring, then it is
  * returned in *mk_ret with its semaphore read-locked.  This is needed to ensure
- * that only one task links the fscrypt_info into ->mk_decrypted_inodes (as
+ * that only one task links the fscrypt_info into ->mk_active_infos (as
  * multiple tasks may race to create an fscrypt_info for the same inode), and to
  * synchronize the master key being removed with a new inode starting to use it.
  */
@@ -504,9 +504,9 @@ static void put_crypt_info(struct fscrypt_info *ci)
 		 * inode from a master key struct that already had its secret
 		 * removed, then complete the full removal of the struct.
 		 */
-		spin_lock(&mk->mk_decrypted_inodes_lock);
+		spin_lock(&mk->mk_active_infos_lock);
 		list_del(&ci->ci_master_key_link);
-		spin_unlock(&mk->mk_decrypted_inodes_lock);
+		spin_unlock(&mk->mk_active_infos_lock);
 		fscrypt_put_master_key_activeref(mk);
 	}
 	memzero_explicit(ci, sizeof(*ci));
@@ -538,9 +538,9 @@ static bool fscrypt_set_inode_info(struct inode *inode,
 	if (mk) {
 		ci->ci_master_key = mk;
 		refcount_inc(&mk->mk_active_refs);
-		spin_lock(&mk->mk_decrypted_inodes_lock);
-		list_add(&ci->ci_master_key_link, &mk->mk_decrypted_inodes);
-		spin_unlock(&mk->mk_decrypted_inodes_lock);
+		spin_lock(&mk->mk_active_infos_lock);
+		list_add(&ci->ci_master_key_link, &mk->mk_active_infos);
+		spin_unlock(&mk->mk_active_infos_lock);
 	}
 	return true;
 }
