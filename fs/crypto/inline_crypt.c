@@ -271,7 +271,10 @@ void fscrypt_set_bio_crypt_ctx(struct bio *bio, const struct inode *inode,
 
 	if (!fscrypt_inode_uses_inline_crypto(inode))
 		return;
+
 	ci = fscrypt_get_lblk_info(inode, first_lblk, &ci_offset, NULL);
+	if (!ci)
+		return;
 
 	fscrypt_generate_dun(ci, ci_offset, dun);
 	bio_crypt_set_ctx(bio, ci->ci_enc_key->blk_key, dun, gfp_mask);
@@ -364,7 +367,7 @@ bool fscrypt_mergeable_bio(struct bio *bio, const struct inode *inode,
 	 * uses the same pointer.  I.e., there's currently no need to support
 	 * merging requests where the keys are the same but the pointers differ.
 	 */
-	if (bc->bc_key != ci->ci_enc_key->blk_key)
+	if (!ci || bc->bc_key != ci->ci_enc_key->blk_key)
 		return false;
 
 	fscrypt_generate_dun(ci, ci_offset, next_dun);
