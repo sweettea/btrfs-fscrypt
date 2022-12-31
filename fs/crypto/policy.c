@@ -752,6 +752,26 @@ int fscrypt_set_context(struct inode *inode, void *fs_data)
 EXPORT_SYMBOL_GPL(fscrypt_set_context);
 
 /**
+ * fscrypt_set_extent_context() - Set the fscrypt context for an extent
+ * @ci: info from which to fetch policy and nonce
+ * @ctx: where context should be written
+ * @len: the size of ctx
+ *
+ * Given an fscrypt_info belonging to an extent (generated via
+ * fscrypt_prepare_new_extent()), generate a new context and write it to @ctx.
+ * len is checked to be at least FSCRYPT_SET_CONTEXT_MAX_SIZE bytes.
+ *
+ * Return: size of the resulting context or a negative error code.
+ */
+int fscrypt_set_extent_context(struct fscrypt_info *ci, void *ctx, size_t len)
+{
+	if (len < FSCRYPT_SET_CONTEXT_MAX_SIZE)
+		return -EINVAL;
+	return fscrypt_new_context(ctx, &ci->ci_policy, ci->ci_nonce);
+}
+EXPORT_SYMBOL_GPL(fscrypt_set_extent_context);
+
+/**
  * fscrypt_parse_test_dummy_encryption() - parse the test_dummy_encryption mount option
  * @param: the mount option
  * @dummy_policy: (input/output) the place to write the dummy policy that will

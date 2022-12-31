@@ -800,6 +800,56 @@ void fscrypt_free_extent_info(struct fscrypt_info **info_ptr)
 EXPORT_SYMBOL_GPL(fscrypt_free_extent_info);
 
 /**
+ * fscrypt_load_extent_info() - set up a preexisting extent's fscrypt_info
+ * @inode: the inode to which the extent belongs. Must be encrypted.
+ * @buf: a buffer containing the extent's stored context
+ * @len: the length of the @ctx buffer
+ * @info_ptr: a pointer to return the extent's fscrypt_info into. Should be
+ *	      a pointer to a member of the extent struct, as it will be passed
+ *	      back to the filesystem if key removal demands removal of the
+ *	      info from the extent
+ *
+ * This is not %GFP_NOFS safe, so the caller is expected to call
+ * memalloc_nofs_save/restore() if appropriate.
+ *
+ * Return: 0 if successful, or -errno if it fails.
+ */
+int fscrypt_load_extent_info(struct inode *inode, void *buf, size_t len,
+			     struct fscrypt_info **info_ptr)
+{
+	int res;
+	union fscrypt_context ctx;
+	union fscrypt_policy policy;
+
+	if (!fscrypt_has_encryption_key(inode))
+		return -EINVAL;
+
+	memcpy(&ctx, buf, len);
+
+	res = fscrypt_policy_from_context(&policy, &ctx, res);
+	if (res) {
+		fscrypt_warn(inode,
+			     "Unrecognized or corrupt encryption context");
+		return res;
+	}
+
+	if (!fscrypt_supported_policy(&policy, inode)) {
+		return -EINVAL;
+	}
+
+	res = fscrypt_setup_encryption_info(inode, &policy,
+					    fscrypt_context_nonce(&ctx),
+					    IS_CASEFOLDED(inode) &&
+					    S_ISDIR(inode->i_mode),
+					    info_ptr);
+
+	if (res == -ENOPKG) /* Algorithm unavailable? */
+		res = 0;
+	return res;
+}
+EXPORT_SYMBOL_GPL(fscrypt_load_extent_info);
+
+/**
  * fscrypt_put_encryption_info() - free most of an inode's fscrypt data
  * @inode: an inode being evicted
  *
