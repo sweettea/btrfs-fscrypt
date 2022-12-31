@@ -108,8 +108,8 @@ int fscrypt_crypt_block(const struct inode *inode, fscrypt_direction_t rw,
 	DECLARE_CRYPTO_WAIT(wait);
 	struct scatterlist dst, src;
 	u64 ci_offset = 0;
-	struct fscrypt_info *ci =
-		fscrypt_get_lblk_info(inode, lblk_num, &ci_offset, NULL);
+	struct fscrypt_info *ci = fscrypt_get_lblk_info(inode, lblk_num,
+							&ci_offset, NULL);
 	struct crypto_skcipher *tfm = fscrypt_get_contents_tfm(ci);
 	int res = 0;
 
