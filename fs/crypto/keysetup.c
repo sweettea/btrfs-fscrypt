@@ -567,7 +567,11 @@ fscrypt_setup_encryption_info(struct inode *inode,
 	if (!crypt_info)
 		return -ENOMEM;
 
-	crypt_info->ci_inode = inode;
+	if (fscrypt_uses_extent_encryption(inode))
+		crypt_info->ci_info_ptr = info_ptr;
+	else
+		crypt_info->ci_inode = inode;
+
 	crypt_info->ci_sb = inode->i_sb;
 	crypt_info->ci_policy = *policy;
 	memcpy(crypt_info->ci_nonce, nonce, FSCRYPT_FILE_NONCE_SIZE);
