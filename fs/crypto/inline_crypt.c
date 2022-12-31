@@ -113,6 +113,10 @@ int fscrypt_select_encryption_impl(struct fscrypt_info *ci)
 	if (!(sb->s_flags & SB_INLINECRYPT))
 		return 0;
 
+	/* The filesystem must not use per-extent infos */
+	if (fscrypt_uses_extent_encryption(inode))
+		return 0;
+
 	/*
 	 * When a page contains multiple logically contiguous filesystem blocks,
 	 * some filesystem code only calls fscrypt_mergeable_bio() for the first
