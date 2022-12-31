@@ -513,22 +513,23 @@ static void put_crypt_info(struct fscrypt_info *ci)
 	kmem_cache_free(fscrypt_info_cachep, ci);
 }
 
-static bool fscrypt_set_inode_info(struct inode *inode,
-				   struct fscrypt_info *ci,
-				   struct fscrypt_master_key *mk)
+static bool fscrypt_set_info(struct fscrypt_info **info_ptr,
+			     struct fscrypt_info *ci,
+			     struct fscrypt_master_key *mk)
 {
 	if (ci == NULL) {
-		inode->i_crypt_info = NULL;
+		*info_ptr = NULL;
 		return true;
 	}
 
 	/*
-	 * For existing inodes, multiple tasks may race to set ->i_crypt_info.
-	 * So use cmpxchg_release().  This pairs with the smp_load_acquire() in
-	 * fscrypt_get_info().  I.e., here we publish ->i_crypt_info with a
-	 * RELEASE barrier so that other tasks can ACQUIRE it.
+	 * For existing objects, multiple tasks may race to set ->i_crypt_info
+	 * or the equivalent. So use cmpxchg_release().  This pairs with the
+	 * smp_load_acquire() in fscrypt_get_info().  I.e., here we publish
+	 * ->i_crypt_info with a RELEASE barrier so that other tasks can
+	 *  ACQUIRE it.
 	 */
-	if (cmpxchg_release(&inode->i_crypt_info, NULL, ci) != NULL)
+	if (cmpxchg_release(info_ptr, NULL, ci) != NULL)
 		return false;
 
 	/*
@@ -549,7 +550,8 @@ static int
 fscrypt_setup_encryption_info(struct inode *inode,
 			      const union fscrypt_policy *policy,
 			      const u8 nonce[FSCRYPT_FILE_NONCE_SIZE],
-			      bool need_dirhash_key)
+			      bool need_dirhash_key,
+			      struct fscrypt_info **info_ptr)
 {
 	struct fscrypt_info *crypt_info;
 	struct fscrypt_mode *mode;
@@ -582,7 +584,7 @@ fscrypt_setup_encryption_info(struct inode *inode,
 	if (res)
 		goto out;
 
-	set_succeeded = fscrypt_set_inode_info(inode, crypt_info, mk);
+	set_succeeded = fscrypt_set_info(info_ptr, crypt_info, mk);
 	res = 0;
 out:
 	if (mk) {
@@ -631,7 +633,7 @@ int fscrypt_get_encryption_info(struct inode *inode, bool allow_unsupported)
 		if (dir_info)
 			mk = dir_info->ci_master_key;
 
-		fscrypt_set_inode_info(inode, dir_info, mk);
+		fscrypt_set_info(&inode->i_crypt_info, dir_info, mk);
 		dput(parent_dentry);
 		dput(dentry);
 		return 0;
@@ -663,7 +665,8 @@ int fscrypt_get_encryption_info(struct inode *inode, bool allow_unsupported)
 	res = fscrypt_setup_encryption_info(inode, &policy,
 					    fscrypt_context_nonce(&ctx),
 					    IS_CASEFOLDED(inode) &&
-					    S_ISDIR(inode->i_mode));
+					    S_ISDIR(inode->i_mode),
+					    &inode->i_crypt_info);
 
 	if (res == -ENOPKG && allow_unsupported) /* Algorithm unavailable? */
 		res = 0;
@@ -722,15 +725,16 @@ int fscrypt_prepare_new_inode(struct inode *dir, struct inode *inode,
 	if (fscrypt_uses_extent_encryption(inode)) {
 		struct fscrypt_info *dir_info = fscrypt_get_inode_info(dir);
 
-		fscrypt_set_inode_info(inode, dir_info,
-				       dir_info->ci_master_key);
+		fscrypt_set_info(&inode->i_crypt_info, dir_info,
+				 dir_info->ci_master_key);
 		return 0;
 	}
 
 	get_random_bytes(nonce, FSCRYPT_FILE_NONCE_SIZE);
 	return fscrypt_setup_encryption_info(inode, policy, nonce,
 					     IS_CASEFOLDED(dir) &&
-					     S_ISDIR(inode->i_mode));
+					     S_ISDIR(inode->i_mode),
+					     &inode->i_crypt_info);
 }
 EXPORT_SYMBOL_GPL(fscrypt_prepare_new_inode);
 
@@ -745,7 +749,7 @@ void fscrypt_put_encryption_info(struct inode *inode)
 {
 	if (!fscrypt_uses_extent_encryption(inode))
 		put_crypt_info(fscrypt_get_inode_info(inode));
-	fscrypt_set_inode_info(inode, NULL, NULL);
+	fscrypt_set_info(&inode->i_crypt_info, NULL, NULL);
 }
 EXPORT_SYMBOL(fscrypt_put_encryption_info);
 
