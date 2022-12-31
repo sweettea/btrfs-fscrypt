@@ -294,8 +294,7 @@ static inline bool fscrypt_uses_extent_encryption(const struct inode *inode)
 	if (!S_ISREG(inode->i_mode))
 		return false;
 
-	// No filesystem currently uses per-extent infos
-	return false;
+	return !!inode->i_sb->s_cop->get_extent_info;
 }
 
 /**
@@ -336,6 +335,17 @@ static inline struct fscrypt_info *
 fscrypt_get_lblk_info(const struct inode *inode, u64 lblk, u64 *offset,
 		      u64 *extent_len)
 {
+	if (fscrypt_uses_extent_encryption(inode)) {
+		struct fscrypt_info *info;
+		int res;
+
+		res = inode->i_sb->s_cop->get_extent_info(inode, lblk, &info,
+							  offset, extent_len);
+		if (res == 0)
+			return info;
+		return NULL;
+	}
+
 	if (offset)
 		*offset = lblk;
 	if (extent_len)

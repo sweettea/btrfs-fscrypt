@@ -743,6 +743,63 @@ int fscrypt_prepare_new_inode(struct inode *dir, struct inode *inode,
 EXPORT_SYMBOL_GPL(fscrypt_prepare_new_inode);
 
 /**
+ * fscrypt_prepare_new_extent() - set up the fscrypt_info for a new extent
+ * @inode: the inode to which the extent belongs
+ * @info_ptr: a pointer to return the extent's fscrypt_info into. Should be
+ *	      a pointer to a member of the extent struct, as it will be passed
+ *	      back to the filesystem if key removal demands removal of the
+ *	      info from the extent
+ * @encrypt_ret: (output) set to %true if the new inode will be encrypted
+ *
+ * If the extent is part of an encrypted inode, set up its fscrypt_info in
+ * preparation for encrypting data and set *encrypt_ret=true.
+ *
+ * This isn't %GFP_NOFS-safe, and therefore it should be called before starting
+ * any filesystem transaction to create the inode.
+ *
+ * This doesn't persist the new inode's encryption context.  That still needs to
+ * be done later by calling fscrypt_set_context().
+ *
+ * Return: 0 on success, -ENOKEY if the encryption key is missing, or another
+ *	   -errno code
+ */
+int fscrypt_prepare_new_extent(struct inode *inode,
+			       struct fscrypt_info **info_ptr,
+			       bool *encrypt_ret)
+{
+	const union fscrypt_policy *policy;
+	u8 nonce[FSCRYPT_FILE_NONCE_SIZE];
+
+	policy = fscrypt_policy_to_inherit(inode);
+	if (policy == NULL)
+		return 0;
+	if (IS_ERR(policy))
+		return PTR_ERR(policy);
+
+	/* Only regular files can have extents.  */
+	if (WARN_ON_ONCE(!S_ISREG(inode->i_mode)))
+		return -EINVAL;
+
+	*encrypt_ret = true;
+
+	get_random_bytes(nonce, FSCRYPT_FILE_NONCE_SIZE);
+	return fscrypt_setup_encryption_info(inode, policy, nonce,
+					     false, info_ptr);
+}
+EXPORT_SYMBOL_GPL(fscrypt_prepare_new_extent);
+
+/**
+ * fscrypt_free_extent_info() - free an extent's fscrypt_info
+ * @info_ptr: a pointer containing the extent's fscrypt_info pointer.
+ */
+void fscrypt_free_extent_info(struct fscrypt_info **info_ptr)
+{
+	put_crypt_info(*info_ptr);
+	fscrypt_set_info(info_ptr, NULL, NULL);
+}
+EXPORT_SYMBOL_GPL(fscrypt_free_extent_info);
+
+/**
  * fscrypt_put_encryption_info() - free most of an inode's fscrypt data
  * @inode: an inode being evicted
  *

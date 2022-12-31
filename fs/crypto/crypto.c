@@ -118,6 +118,12 @@ int fscrypt_crypt_block(const struct inode *inode, fscrypt_direction_t rw,
 		return -EINVAL;
 	if (WARN_ON_ONCE(len % FSCRYPT_CONTENTS_ALIGNMENT != 0))
 		return -EINVAL;
+	if (!ci) {
+		fscrypt_err(inode,
+			    "Error %d getting extent info for block %llu",
+			    res, lblk_num);
+		return -EINVAL;
+	}
 
 	fscrypt_generate_iv(&iv, ci_offset, ci);
 
