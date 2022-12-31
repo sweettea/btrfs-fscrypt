@@ -31,7 +31,7 @@ However, except for filenames, fscrypt does not encrypt filesystem
 metadata.
 
 Unlike eCryptfs, which is a stacked filesystem, fscrypt is integrated
-directly into supported filesystems --- currently ext4, F2FS, and
+directly into supported filesystems --- currently btrfs, ext4, F2FS, and
 UBIFS.  This allows encrypted files to be read and written without
 caching both the decrypted and encrypted pages in the pagecache,
 thereby nearly halving the memory used and bringing it in line with
@@ -280,6 +280,11 @@ included in the IV.  Moreover:
   key derived using the KDF.  Users may use the same master key for
   other v2 encryption policies.
 
+For filesystems with extent-based content encryption (e.g. btrfs),
+this is the only choice. Data shared among multiple inodes must share
+the exact same key, therefore necessitating inodes using the same key
+for contents encryption.
+
 IV_INO_LBLK_64 policies
 -----------------------
 
@@ -374,12 +379,13 @@ to individual filesystems.  However, authenticated encryption (AE)
 modes are not currently supported because of the difficulty of dealing
 with ciphertext expansion.
 
-Contents encryption
--------------------
+Inode-based contents encryption
+-------------------------------
 
-For file contents, each filesystem block is encrypted independently.
-Starting from Linux kernel 5.5, encryption of filesystems with block
-size less than system's page size is supported.
+Most filesystems use the previously discussed per-file keys. For these
+filesystems, for file contents, each filesystem block is encrypted
+independently.  Starting from Linux kernel 5.5, encryption of filesystems
+with block size less than system's page size is supported.
 
 Each block's IV is set to the logical block number within the file as
 a little endian number, except that:
@@ -402,6 +408,26 @@ a little endian number, except that:
 Note that because file logical block numbers are included in the IVs,
 filesystems must enforce that blocks are never shifted around within
 encrypted files, e.g. via "collapse range" or "insert range".
+
+Extent-based contents encryption
+--------------------------------
+
+For certain filesystems (currently only btrfs), data is encrypted on a
+per-extent basis, for whatever the filesystem's notion of an extent is. The
+scheme is exactly as with inode-based contents encryption, except that the
+'inode number' for an extent is requested from the filesystem instead of from
+the file's inode, and the 'logical block number' refers to an offset within the
+extent.
+
+Because the encryption material is per-extent instead of per-inode, as long 
+as the extent's encryption context does not change, the filesystem may shift
+around the position of the extent, and may have multiple files referring to
+the same encrypted extent.
+
+Not all extents within a file are decrypted simultaneously, so it is possible
+for a file read to fail partway through the file if it crosses into an extent
+whose key is unavailable.  However, all writes will succeed, unless the key is
+removed mid-write.
 
 Filenames encryption
 --------------------
