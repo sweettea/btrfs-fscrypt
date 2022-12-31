@@ -162,8 +162,8 @@ void fscrypt_destroy_prepared_key(struct super_block *sb,
 	memzero_explicit(prep_key, sizeof(*prep_key));
 }
 
-/* Given a per-file encryption key, set up the file's crypto transform object */
-int fscrypt_set_per_file_enc_key(struct fscrypt_info *ci, const u8 *raw_key)
+/* Given a fscrypt_info, set up an appropriate crypto transform object */
+int fscrypt_set_per_info_enc_key(struct fscrypt_info *ci, const u8 *raw_key)
 {
 	ci->ci_owns_key = true;
 	return fscrypt_prepare_key(&ci->ci_enc_key, raw_key, ci);
@@ -313,7 +313,7 @@ unlock:
 	return 0;
 }
 
-static int fscrypt_setup_v2_file_key(struct fscrypt_info *ci,
+static int fscrypt_setup_v2_info_key(struct fscrypt_info *ci,
 				     struct fscrypt_master_key *mk,
 				     bool need_dirhash_key)
 {
@@ -321,8 +321,8 @@ static int fscrypt_setup_v2_file_key(struct fscrypt_info *ci,
 
 	if (ci->ci_policy.v2.flags & FSCRYPT_POLICY_FLAG_DIRECT_KEY) {
 		/*
-		 * DIRECT_KEY: instead of deriving per-file encryption keys, the
-		 * per-file nonce will be included in all the IVs.  But unlike
+		 * DIRECT_KEY: instead of deriving per-info encryption keys, the
+		 * per-info nonce will be included in all the IVs.  But unlike
 		 * v1 policies, for v2 policies in this case we don't encrypt
 		 * with the master key directly but rather derive a per-mode
 		 * encryption key.  This ensures that the master key is
@@ -354,7 +354,7 @@ static int fscrypt_setup_v2_file_key(struct fscrypt_info *ci,
 		if (err)
 			return err;
 
-		err = fscrypt_set_per_file_enc_key(ci, derived_key);
+		err = fscrypt_set_per_info_enc_key(ci, derived_key);
 		memzero_explicit(derived_key, ci->ci_mode->keysize);
 	}
 	if (err)
@@ -418,7 +418,7 @@ static bool fscrypt_valid_master_key_size(const struct fscrypt_master_key *mk,
  * multiple tasks may race to create an fscrypt_info for the same inode), and to
  * synchronize the master key being removed with a new inode starting to use it.
  */
-static int setup_file_encryption_key(struct fscrypt_info *ci,
+static int setup_info_encryption_key(struct fscrypt_info *ci,
 				     bool need_dirhash_key,
 				     struct fscrypt_master_key **mk_ret)
 {
@@ -445,7 +445,7 @@ static int setup_file_encryption_key(struct fscrypt_info *ci,
 		 * to before the search of ->s_master_keys, since users
 		 * shouldn't be able to override filesystem-level keys.
 		 */
-		return fscrypt_setup_v1_file_key_via_subscribed_keyrings(ci);
+		return fscrypt_setup_v1_info_key_via_subscribed_keyrings(ci);
 	}
 	down_read(&mk->mk_sem);
 
@@ -462,10 +462,10 @@ static int setup_file_encryption_key(struct fscrypt_info *ci,
 
 	switch (ci->ci_policy.version) {
 	case FSCRYPT_POLICY_V1:
-		err = fscrypt_setup_v1_file_key(ci, mk->mk_secret.raw);
+		err = fscrypt_setup_v1_info_key(ci, mk->mk_secret.raw);
 		break;
 	case FSCRYPT_POLICY_V2:
-		err = fscrypt_setup_v2_file_key(ci, mk, need_dirhash_key);
+		err = fscrypt_setup_v2_info_key(ci, mk, need_dirhash_key);
 		break;
 	default:
 		WARN_ON(1);
@@ -584,7 +584,7 @@ fscrypt_setup_encryption_info(struct inode *inode,
 	WARN_ON(mode->ivsize > FSCRYPT_MAX_IV_SIZE);
 	crypt_info->ci_mode = mode;
 
-	res = setup_file_encryption_key(crypt_info, need_dirhash_key, &mk);
+	res = setup_info_encryption_key(crypt_info, need_dirhash_key, &mk);
 	if (res)
 		goto out;
 

@@ -250,7 +250,7 @@ err_free_dk:
 }
 
 /* v1 policy, DIRECT_KEY: use the master key directly */
-static int setup_v1_file_key_direct(struct fscrypt_info *ci,
+static int setup_v1_info_key_direct(struct fscrypt_info *ci,
 				    const u8 *raw_master_key)
 {
 	struct fscrypt_direct_key *dk;
@@ -263,8 +263,8 @@ static int setup_v1_file_key_direct(struct fscrypt_info *ci,
 	return 0;
 }
 
-/* v1 policy, !DIRECT_KEY: derive the file's encryption key */
-static int setup_v1_file_key_derived(struct fscrypt_info *ci,
+/* v1 policy, !DIRECT_KEY: derive the info's encryption key */
+static int setup_v1_info_key_derived(struct fscrypt_info *ci,
 				     const u8 *raw_master_key)
 {
 	u8 *derived_key;
@@ -283,21 +283,21 @@ static int setup_v1_file_key_derived(struct fscrypt_info *ci,
 	if (err)
 		goto out;
 
-	err = fscrypt_set_per_file_enc_key(ci, derived_key);
+	err = fscrypt_set_per_info_enc_key(ci, derived_key);
 out:
 	kfree_sensitive(derived_key);
 	return err;
 }
 
-int fscrypt_setup_v1_file_key(struct fscrypt_info *ci, const u8 *raw_master_key)
+int fscrypt_setup_v1_info_key(struct fscrypt_info *ci, const u8 *raw_master_key)
 {
 	if (ci->ci_policy.v1.flags & FSCRYPT_POLICY_FLAG_DIRECT_KEY)
-		return setup_v1_file_key_direct(ci, raw_master_key);
+		return setup_v1_info_key_direct(ci, raw_master_key);
 	else
-		return setup_v1_file_key_derived(ci, raw_master_key);
+		return setup_v1_info_key_derived(ci, raw_master_key);
 }
 
-int fscrypt_setup_v1_file_key_via_subscribed_keyrings(struct fscrypt_info *ci)
+int fscrypt_setup_v1_info_key_via_subscribed_keyrings(struct fscrypt_info *ci)
 {
 	struct key *key;
 	const struct fscrypt_key *payload;
@@ -314,7 +314,7 @@ int fscrypt_setup_v1_file_key_via_subscribed_keyrings(struct fscrypt_info *ci)
 	if (IS_ERR(key))
 		return PTR_ERR(key);
 
-	err = fscrypt_setup_v1_file_key(ci, payload->raw);
+	err = fscrypt_setup_v1_info_key(ci, payload->raw);
 	up_read(&key->sem);
 	key_put(key);
 	return err;
