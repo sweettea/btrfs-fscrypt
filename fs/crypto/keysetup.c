@@ -266,11 +266,11 @@ int fscrypt_derive_dirhash_key(struct fscrypt_info *ci,
 void fscrypt_hash_inode_number(struct fscrypt_info *ci,
 			       const struct fscrypt_master_key *mk)
 {
-	WARN_ON(ci->ci_inode->i_ino == 0);
+	u64 ino = fscrypt_get_info_ino(ci);
+	WARN_ON(ino == 0);
 	WARN_ON(!mk->mk_ino_hash_key_initialized);
 
-	ci->ci_hashed_ino = (u32)siphash_1u64(ci->ci_inode->i_ino,
-					      &mk->mk_ino_hash_key);
+	ci->ci_hashed_ino = (u32)siphash_1u64(ino, &mk->mk_ino_hash_key);
 }
 
 static int fscrypt_setup_iv_ino_lblk_32_key(struct fscrypt_info *ci,
@@ -308,7 +308,7 @@ unlock:
 	 * New inodes may not have an inode number assigned yet.
 	 * Hashing their inode number is delayed until later.
 	 */
-	if (ci->ci_inode->i_ino)
+	if (fscrypt_get_info_ino(ci))
 		fscrypt_hash_inode_number(ci, mk);
 	return 0;
 }
