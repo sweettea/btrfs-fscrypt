@@ -287,6 +287,23 @@ typedef enum {
 } fscrypt_direction_t;
 
 /**
+ * fscrypt_uses_extent_encryption() -- whether an inode uses per-extent
+ *				       encryption
+ *
+ * @inode: the inode in question
+ *
+ * Return: true if the inode uses per-extent fscrypt_infos, false otherwise
+ */
+static inline bool fscrypt_uses_extent_encryption(const struct inode *inode)
+{
+	// Non-regular files don't have extents
+	if (!S_ISREG(inode->i_mode))
+		return false;
+
+	return !!inode->i_sb->s_cop->get_extent_info;
+}
+
+/**
  * fscrypt_get_lblk_info() - get the fscrypt_info to crypt a particular block
  *
  * @inode:      the inode to which the block belongs
@@ -306,30 +323,23 @@ static inline struct fscrypt_info *
 fscrypt_get_lblk_info(const struct inode *inode, u64 lblk, u64 *offset,
 		      u64 *extent_len)
 {
+	if (fscrypt_uses_extent_encryption(inode)) {
+		struct fscrypt_info *info;
+		int res;
+
+		res = inode->i_sb->s_cop->get_extent_info(inode, lblk, &info,
+							  offset, extent_len);
+		if (res == 0)
+			return info;
+		return NULL;
+	}
+
 	if (offset)
 		*offset = lblk;
 	if (extent_len)
 		*extent_len = U64_MAX;
 
 	return inode->i_crypt_info;
-}
-
-/**
- * fscrypt_uses_extent_encryption() -- whether an inode uses per-extent
- *				       encryption
- *
- * @inode: the inode in question
- *
- * Return: true if the inode uses per-extent fscrypt_infos, false otherwise
- */
-static inline bool fscrypt_uses_extent_encryption(const struct inode *inode)
-{
-	// Non-regular files don't have extents
-	if (!S_ISREG(inode->i_mode))
-		return false;
-
-	// No filesystems currently use per-extent infos
-	return false;
 }
 
 /**

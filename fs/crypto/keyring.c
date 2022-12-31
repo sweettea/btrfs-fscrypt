@@ -875,7 +875,7 @@ static void evict_dentries_for_decrypted_inodes(struct fscrypt_master_key *mk)
 
 	list_for_each_entry(ci, &mk->mk_decrypted_inodes, ci_master_key_link) {
 		inode = ci->ci_inode;
-		if (!inode) {
+		if (ci->ci_info_ptr) {
 			if (!ci->ci_sb->s_cop->forget_extent_info)
 				continue;
 
@@ -1036,6 +1036,19 @@ static int do_remove_key(struct file *filp, void __user *_uarg, bool all_users)
 	mk = fscrypt_find_master_key(sb, &arg.key_spec);
 	if (!mk)
 		return -ENOKEY;
+
+	/*
+	 * For filesystems with extent encryption, there may be extents which
+	 * need to come into existence and get the key, lest their data be
+	 * stuck in memory and not be flushable for lack of key. So just sync
+	 * the filesystem to encourage all the dirty pages to be written out.
+	 */
+	if (sb->s_cop->get_extent_info) {
+		down_read(&sb->s_umount);
+		sync_filesystem(sb);
+		up_read(&sb->s_umount);
+	}
+
 	down_write(&mk->mk_sem);
 
 	/* If relevant, remove current user's (or all users) claim to the key */
