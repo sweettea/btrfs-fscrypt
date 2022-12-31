@@ -886,6 +886,13 @@ static void evict_dentries_for_decrypted_objects(struct fscrypt_master_key *mk)
 
 	list_for_each_entry(ci, &mk->mk_active_infos, ci_master_key_link) {
 		inode = ci->ci_inode;
+		if (!inode) {
+			spin_unlock(&mk->mk_active_infos_lock);
+			ci->ci_sb->s_cop->forget_extent_info(ci->ci_info_ptr);
+			spin_lock(&mk->mk_active_infos_lock);
+			continue;
+		}
+
 		spin_lock(&inode->i_lock);
 		if (inode->i_state & (I_FREEING | I_WILL_FREE | I_NEW)) {
 			spin_unlock(&inode->i_lock);
