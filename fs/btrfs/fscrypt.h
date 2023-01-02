@@ -4,9 +4,30 @@
 #define BTRFS_FSCRYPT_H
 
 #include <linux/fscrypt.h>
+#include "accessors.h"
 #include "extent_io.h"
 
 #include "fs.h"
+
+static inline u32
+btrfs_file_extent_encryption_ctxsize(const struct extent_buffer *eb,
+				     struct btrfs_file_extent_item *e)
+{
+	if (!btrfs_file_extent_encryption(eb, e))
+		return 0;
+
+	return btrfs_get_32(eb, e, offsetof(struct btrfs_file_extent_item,
+					    encryption_context));
+}
+
+static inline u8
+btrfs_file_extent_ctxsize_from_item(const struct extent_buffer *leaf,
+				    const struct btrfs_path *path)
+{
+	return (btrfs_item_size(leaf, path->slots[0]) -
+		sizeof(struct btrfs_file_extent_item));
+}
+
 
 #ifdef CONFIG_FS_ENCRYPTION
 int btrfs_fscrypt_get_disk_name(struct extent_buffer *leaf,
