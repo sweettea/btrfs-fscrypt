@@ -11,6 +11,7 @@
 #include "messages.h"
 #include "transaction.h"
 #include "xattr.h"
+#include "fscrypt.h"
 
 static int btrfs_fscrypt_get_context(struct inode *inode, void *ctx, size_t len)
 {

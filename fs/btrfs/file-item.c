@@ -1410,6 +1410,14 @@ void btrfs_extent_item_to_extent_map(struct btrfs_inode *inode,
 
 		ctxsize = btrfs_file_extent_ctxsize_from_item(leaf, path);
 		ASSERT(ctxsize == btrfs_file_extent_encryption_ctxsize(leaf, fi));
+
+#ifdef CONFIG_FS_ENCRYPTION
+		em->fscrypt_context.len = ctxsize;
+
+		read_extent_buffer(leaf, em->fscrypt_context.buffer,
+				   (unsigned long)fi->fscrypt_context,
+				   ctxsize);
+#endif /* CONFIG_FS_ENCRYPTION */
 	} else if (type == BTRFS_FILE_EXTENT_INLINE) {
 		em->block_start = EXTENT_MAP_INLINE;
 		em->start = extent_start;

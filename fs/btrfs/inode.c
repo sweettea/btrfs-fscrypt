@@ -3088,6 +3088,7 @@ static int insert_reserved_file_extent(struct btrfs_trans_handle *trans,
 	u64 num_bytes = btrfs_stack_file_extent_num_bytes(stack_fi);
 	u64 ram_bytes = btrfs_stack_file_extent_ram_bytes(stack_fi);
 	struct btrfs_drop_extents_args drop_args = { 0 };
+	size_t context_len = fscrypt_context ? fscrypt_context->len : 0;
 	int ret;
 
 	path = btrfs_alloc_path();
@@ -3127,6 +3128,13 @@ static int insert_reserved_file_extent(struct btrfs_trans_handle *trans,
 	write_extent_buffer(leaf, stack_fi,
 			btrfs_item_ptr_offset(leaf, path->slots[0]),
 			sizeof(struct btrfs_file_extent_item));
+#ifdef CONFIG_FS_ENCRYPTION
+	if (context_len)
+		write_extent_buffer(leaf, fscrypt_context->buffer,
+				btrfs_item_ptr_offset(leaf, path->slots[0]) +
+				sizeof(struct btrfs_file_extent_item),
+				context_len);
+#endif /* CONFIG_FS_ENCRYPTION */
 
 	btrfs_mark_buffer_dirty(leaf);
 	btrfs_release_path(path);
@@ -3222,6 +3230,7 @@ static int insert_ordered_extent_file_extent(struct btrfs_trans_handle *trans,
 
 	return insert_reserved_file_extent(trans, BTRFS_I(oe->inode),
 					   oe->file_offset, &stack_fi,
+					   &oe->fscrypt_context,
 					   update_inode_bytes, oe->qgroup_rsv);
 }
 
