@@ -1302,6 +1302,27 @@ void btrfs_extent_item_to_extent_map(struct btrfs_inode *inode,
 
 		ctxsize = btrfs_file_extent_ctxsize_from_item(leaf, path);
 		ASSERT(ctxsize == btrfs_file_extent_encryption_ctxsize(leaf, fi));
+
+#ifdef CONFIG_FS_ENCRYPTION
+		if (ctxsize) {
+			u8 context[FSCRYPT_SET_CONTEXT_MAX_SIZE];
+			int res;
+			unsigned int nofs_flag;
+
+			read_extent_buffer(leaf, context,
+					   (unsigned long)fi->fscrypt_context,
+					   ctxsize);
+			nofs_flag = memalloc_nofs_save();
+			res = fscrypt_load_extent_info(&inode->vfs_inode,
+						       context, ctxsize,
+						       &em->fscrypt_info);
+			memalloc_nofs_restore(nofs_flag);
+			if (res)
+				btrfs_err(fs_info,
+					  "Unable to load fscrypt info: %d",
+					   res);
+		}
+#endif /* CONFIG_FS_ENCRYPTION */
 	} else if (type == BTRFS_FILE_EXTENT_INLINE) {
 		em->block_start = EXTENT_MAP_INLINE;
 		em->start = extent_start;

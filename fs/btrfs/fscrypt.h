@@ -50,6 +50,12 @@ static inline bool btrfs_fscrypt_match_name(struct fscrypt_name *fname,
 }
 #endif /* CONFIG_FS_ENCRYPTION */
 
+int btrfs_fscrypt_get_extent_info(const struct inode *inode,
+				  u64 lblk_num,
+				  struct fscrypt_info **info_ptr,
+				  u64 *extent_offset,
+				  u64 *extent_length);
+
 extern const struct fscrypt_operations btrfs_fscrypt_ops;
 
 #endif /* BTRFS_FSCRYPT_H */

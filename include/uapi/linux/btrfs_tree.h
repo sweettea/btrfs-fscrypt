@@ -1080,6 +1080,11 @@ struct btrfs_file_extent_item {
 	 * always reflects the size uncompressed and without encoding.
 	 */
 	__le64 num_bytes;
+	/*
+	 * fscrypt extent encryption context. Only present if extent is
+	 * encrypted (as per the encryption field).
+	 */
+	__u8 fscrypt_context[0];
 
 } __attribute__ ((__packed__));
 

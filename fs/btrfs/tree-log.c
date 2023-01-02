@@ -4634,8 +4634,22 @@ static int log_one_extent(struct btrfs_trans_handle *trans,
 	u64 extent_offset = em->start - em->orig_start;
 	u64 block_len;
 	int ret;
-	u8 encryption = btrfs_pack_encryption(IS_ENCRYPTED(&inode->vfs_inode) ?
-					      BTRFS_ENCRYPTION_FSCRYPT : 0, 0);
+	u8 encryption = 0;
+	size_t fscrypt_context_size = 0;
+#ifdef CONFIG_FS_ENCRYPTION
+	u8 context[FSCRYPT_SET_CONTEXT_MAX_SIZE];
+
+	if (em->fscrypt_info) {
+		fscrypt_context_size =
+			fscrypt_set_extent_context(em->fscrypt_info, context,
+						   FSCRYPT_SET_CONTEXT_MAX_SIZE);
+		if (fscrypt_context_size < 0)
+			return fscrypt_context_size;
+
+		encryption = btrfs_pack_encryption(BTRFS_ENCRYPTION_FSCRYPT,
+						   fscrypt_context_size);
+	}
+#endif /* CONFIG_FS_ENCRYPTION */
 
 	btrfs_set_stack_file_extent_generation(&fi, trans->transid);
 	if (test_bit(EXTENT_FLAG_PREALLOC, &em->flags))
@@ -4697,6 +4711,12 @@ static int log_one_extent(struct btrfs_trans_handle *trans,
 	write_extent_buffer(leaf, &fi,
 			    btrfs_item_ptr_offset(leaf, path->slots[0]),
 			    sizeof(fi));
+#ifdef CONFIG_FS_ENCRYPTION
+	write_extent_buffer(leaf, context,
+			    btrfs_item_ptr_offset(leaf, path->slots[0]) +
+			    sizeof(fi), fscrypt_context_size);
+#endif /* CONFIG_FS_ENCRYPTION */
+
 	btrfs_mark_buffer_dirty(leaf);
 
 	btrfs_release_path(path);

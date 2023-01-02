@@ -3036,17 +3036,46 @@ static int insert_reserved_file_extent(struct btrfs_trans_handle *trans,
 	u64 num_bytes = btrfs_stack_file_extent_num_bytes(stack_fi);
 	u64 ram_bytes = btrfs_stack_file_extent_ram_bytes(stack_fi);
 	struct btrfs_drop_extents_args drop_args = { 0 };
-	size_t fscrypt_context_size =
-		btrfs_stack_file_extent_encryption(stack_fi) ?
-			FSCRYPT_SET_CONTEXT_MAX_SIZE : 0;
+	size_t fscrypt_context_size = 0;
+#ifdef CONFIG_FS_ENCRYPTION
+	u8 context[FSCRYPT_SET_CONTEXT_MAX_SIZE];
+#endif /* CONFIG_FS_ENCRYPTION */
+
 	int ret;
 
 	path = btrfs_alloc_path();
 	if (!path)
 		return -ENOMEM;
 
+#ifdef CONFIG_FS_ENCRYPTION
+	if (IS_ENCRYPTED(&inode->vfs_inode)) {
+		u8 encryption;
+		struct fscrypt_info *fscrypt_info;
+		u64 lblk_num = file_pos >> root->fs_info->sectorsize_bits;
+
+		ret = btrfs_fscrypt_get_extent_info(&inode->vfs_inode,
+						    lblk_num, &fscrypt_info,
+						    NULL, NULL);
+		if (ret) {
+			btrfs_err(root->fs_info, "No fscrypt context found");
+			goto out;
+		}
+
+		fscrypt_context_size =
+			fscrypt_set_extent_context(fscrypt_info, context,
+						   FSCRYPT_SET_CONTEXT_MAX_SIZE);
+		if (fscrypt_context_size < 0) {
+			ret = fscrypt_context_size;
+			goto out;
+		}
+		encryption = btrfs_pack_encryption(BTRFS_ENCRYPTION_FSCRYPT,
+						   fscrypt_context_size);
+		btrfs_set_stack_file_extent_encryption(stack_fi, encryption);
+	}
+#endif /* CONFIG_FS_ENCRYPTION */
+
 	/*
-	 * we may be replacing one extent in the tree with another.
+	 * We may be replacing one extent in the tree with another.
 	 * The new extent is pinned in the extent map, and we don't want
 	 * to drop it from the cache until it is completely in the btree.
 	 *
@@ -3078,6 +3107,13 @@ static int insert_reserved_file_extent(struct btrfs_trans_handle *trans,
 	write_extent_buffer(leaf, stack_fi,
 			btrfs_item_ptr_offset(leaf, path->slots[0]),
 			sizeof(struct btrfs_file_extent_item));
+
+#ifdef CONFIG_FS_ENCRYPTION
+	write_extent_buffer(leaf, context,
+			    btrfs_item_ptr_offset(leaf, path->slots[0]) +
+			    sizeof(struct btrfs_file_extent_item),
+			    fscrypt_context_size);
+#endif /* CONFIG_FS_ENCRYPTION */
 
 	btrfs_mark_buffer_dirty(leaf);
 	btrfs_release_path(path);
