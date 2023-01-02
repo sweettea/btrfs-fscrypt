@@ -29,6 +29,11 @@ static inline u8 btrfs_pack_encryption(u8 policy, u8 ctxsize)
 	return policy | (ctxsize << BTRFS_ENCRYPTION_POLICY_BITS);
 }
 
+static inline size_t btrfs_fscrypt_context_size(struct fscrypt_info *info)
+{
+	return info ? FSCRYPT_SET_CONTEXT_MAX_SIZE : 0;
+}
+
 extern const struct fscrypt_operations btrfs_fscrypt_ops;
 
 #endif /* BTRFS_FSCRYPT_H */

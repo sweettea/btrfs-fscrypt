@@ -4680,12 +4680,14 @@ static int log_one_extent(struct btrfs_trans_handle *trans,
 	}
 
 	if (!drop_args.extent_inserted) {
+		size_t fscrypt_context_size =
+			btrfs_fscrypt_context_size(em->fscrypt_info);
 		key.objectid = btrfs_ino(inode);
 		key.type = BTRFS_EXTENT_DATA_KEY;
 		key.offset = em->start;
 
 		ret = btrfs_insert_empty_item(trans, log, path, &key,
-					      sizeof(fi));
+					      sizeof(fi) + fscrypt_context_size);
 		if (ret)
 			return ret;
 	}
