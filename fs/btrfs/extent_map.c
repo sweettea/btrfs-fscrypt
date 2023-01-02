@@ -65,6 +65,8 @@ void free_extent_map(struct extent_map *em)
 	if (!em)
 		return;
 	if (refcount_dec_and_test(&em->refs)) {
+		if (em->fscrypt_info)
+			fscrypt_free_extent_info(&em->fscrypt_info);
 		WARN_ON(extent_map_in_tree(em));
 		WARN_ON(!list_empty(&em->list));
 		if (test_bit(EXTENT_FLAG_FS_MAPPING, &em->flags))
@@ -205,6 +207,13 @@ static int mergable_maps(struct extent_map *prev, struct extent_map *next)
 	 * bad.
 	 */
 	if (!list_empty(&prev->list) || !list_empty(&next->list))
+		return 0;
+
+	/*
+	 * Don't merge adjacent maps with different fscrypt_contexts.
+	 */
+	if (!memcmp(&prev->fscrypt_info, &next->fscrypt_info,
+		    sizeof(next->fscrypt_info)))
 		return 0;
 
 	ASSERT(next->block_start != EXTENT_MAP_DELALLOC &&
