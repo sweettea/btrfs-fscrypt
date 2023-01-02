@@ -1048,6 +1048,11 @@ struct btrfs_file_extent_item {
 	 * but not for stat.
 	 */
 	__u8 compression;
+
+	/*
+	 * 2 bits of encryption type in the lower bits, 6 bits of context size
+	 * in the upper bits. Unencrypted value is 0.
+	 */
 	__u8 encryption;
 	__le16 other_encoding; /* spare for later use */
 
