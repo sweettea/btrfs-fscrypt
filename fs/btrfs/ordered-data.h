@@ -122,6 +122,9 @@ struct btrfs_ordered_extent {
 	/* compression algorithm */
 	int compress_type;
 
+	/* encryption info, if applicable */
+	struct fscrypt_info *fscrypt_info;
+
 	/* Qgroup reserved space */
 	int qgroup_rsv;
 

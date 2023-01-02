@@ -2918,6 +2918,7 @@ int btrfs_writepage_cow_fixup(struct page *page)
 static int insert_reserved_file_extent(struct btrfs_trans_handle *trans,
 				       struct btrfs_inode *inode, u64 file_pos,
 				       struct btrfs_file_extent_item *stack_fi,
+				       struct fscrypt_info *fscrypt_info,
 				       const bool update_inode_bytes,
 				       u64 qgroup_reserved)
 {
@@ -2932,17 +2933,37 @@ static int insert_reserved_file_extent(struct btrfs_trans_handle *trans,
 	u64 num_bytes = btrfs_stack_file_extent_num_bytes(stack_fi);
 	u64 ram_bytes = btrfs_stack_file_extent_ram_bytes(stack_fi);
 	struct btrfs_drop_extents_args drop_args = { 0 };
-	size_t fscrypt_context_size =
-		btrfs_stack_file_extent_encryption(stack_fi) ?
-			FSCRYPT_SET_CONTEXT_MAX_SIZE : 0;
+	size_t fscrypt_context_size = 0;
+#ifdef CONFIG_FS_ENCRYPTION
+	u8 context[FSCRYPT_SET_CONTEXT_MAX_SIZE];
+#endif /* CONFIG_FS_ENCRYPTION */
+
 	int ret;
 
 	path = btrfs_alloc_path();
 	if (!path)
 		return -ENOMEM;
 
+#ifdef CONFIG_FS_ENCRYPTION
+	if (btrfs_stack_file_extent_encryption(stack_fi)) {
+		fscrypt_context_size =
+			fscrypt_set_extent_context(fscrypt_info, context,
+						   FSCRYPT_SET_CONTEXT_MAX_SIZE);
+		if (fscrypt_context_size < 0) {
+			ret = fscrypt_context_size;
+			goto out;
+		}
+		if (fscrypt_context_size) {
+			btrfs_err(root->fs_info, "Unexpected context size %zu",
+				 fscrypt_context_size);
+			ret = -EINVAL;
+			goto out;
+		}
+	}
+#endif /* CONFIG_FS_ENCRYPTION */
+
 	/*
-	 * we may be replacing one extent in the tree with another.
+	 * We may be replacing one extent in the tree with another.
 	 * The new extent is pinned in the extent map, and we don't want
 	 * to drop it from the cache until it is completely in the btree.
 	 *
@@ -2974,6 +2995,14 @@ static int insert_reserved_file_extent(struct btrfs_trans_handle *trans,
 	write_extent_buffer(leaf, stack_fi,
 			btrfs_item_ptr_offset(leaf, path->slots[0]),
 			sizeof(struct btrfs_file_extent_item));
+
+#ifdef CONFIG_FS_ENCRYPTION
+		write_extent_buffer(leaf, context,
+				btrfs_item_ptr_offset(leaf, path->slots[0]) +
+				sizeof(struct btrfs_file_extent_item),
+				fscrypt_context_size);
+#endif /* CONFIG_FS_ENCRYPTION */
+
 
 	btrfs_mark_buffer_dirty(leaf);
 	btrfs_release_path(path);
@@ -3069,7 +3098,8 @@ static int insert_ordered_extent_file_extent(struct btrfs_trans_handle *trans,
 
 	return insert_reserved_file_extent(trans, BTRFS_I(oe->inode),
 					   oe->file_offset, &stack_fi,
-					   update_inode_bytes, oe->qgroup_rsv);
+					   oe->fscrypt_info, update_inode_bytes,
+					   oe->qgroup_rsv);
 }
 
 /*
@@ -9590,7 +9620,7 @@ static struct btrfs_trans_handle *insert_prealloc_file_extent(
 	if (trans) {
 		ret = insert_reserved_file_extent(trans, inode,
 						  file_offset, &stack_fi,
-						  true, qgroup_released);
+						  NULL, true, qgroup_released);
 		if (ret)
 			goto free_qgroup;
 		return trans;
