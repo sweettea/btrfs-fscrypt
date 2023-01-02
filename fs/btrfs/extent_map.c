@@ -9,6 +9,7 @@
 #include "extent_map.h"
 #include "compression.h"
 #include "btrfs_inode.h"
+#include "fscrypt.h"
 
 
 static struct kmem_cache *extent_map_cache;
@@ -65,6 +66,8 @@ void free_extent_map(struct extent_map *em)
 	if (!em)
 		return;
 	if (refcount_dec_and_test(&em->refs)) {
+		if (em->fscrypt_info)
+			fscrypt_free_extent_info(&em->fscrypt_info);
 		WARN_ON(extent_map_in_tree(em));
 		WARN_ON(!list_empty(&em->list));
 		if (test_bit(EXTENT_FLAG_FS_MAPPING, &em->flags))
@@ -205,6 +208,12 @@ static int mergable_maps(struct extent_map *prev, struct extent_map *next)
 	 * bad.
 	 */
 	if (!list_empty(&prev->list) || !list_empty(&next->list))
+		return 0;
+
+	/*
+	 * Don't merge adjacent encrypted maps.
+	 */
+	if (prev->fscrypt_info || next->fscrypt_info)
 		return 0;
 
 	ASSERT(next->block_start != EXTENT_MAP_DELALLOC &&
@@ -815,6 +824,8 @@ void btrfs_drop_extent_map_range(struct btrfs_inode *inode, u64 start, u64 end,
 			split->generation = gen;
 			split->flags = flags;
 			split->compress_type = em->compress_type;
+			btrfs_fscrypt_copy_fscrypt_info(inode, em->fscrypt_info,
+							&split->fscrypt_info);
 			replace_extent_mapping(em_tree, em, split, modified);
 			free_extent_map(split);
 			split = split2;
@@ -856,6 +867,8 @@ void btrfs_drop_extent_map_range(struct btrfs_inode *inode, u64 start, u64 end,
 				split->orig_block_len = 0;
 			}
 
+			btrfs_fscrypt_copy_fscrypt_info(inode, em->fscrypt_info,
+							&split->fscrypt_info);
 			if (extent_map_in_tree(em)) {
 				replace_extent_mapping(em_tree, em, split,
 						       modified);
@@ -1017,6 +1030,8 @@ int split_extent_map(struct btrfs_inode *inode, u64 start, u64 len, u64 pre,
 	split_pre->flags = flags;
 	split_pre->compress_type = em->compress_type;
 	split_pre->generation = em->generation;
+	btrfs_fscrypt_copy_fscrypt_info(inode, em->fscrypt_info,
+					&split_pre->fscrypt_info);
 
 	replace_extent_mapping(em_tree, em, split_pre, 1);
 
@@ -1036,6 +1051,9 @@ int split_extent_map(struct btrfs_inode *inode, u64 start, u64 len, u64 pre,
 	split_mid->flags = flags;
 	split_mid->compress_type = em->compress_type;
 	split_mid->generation = em->generation;
+	btrfs_fscrypt_copy_fscrypt_info(inode, em->fscrypt_info,
+					&split_mid->fscrypt_info);
+
 	add_extent_mapping(em_tree, split_mid, 1);
 
 	/* Once for us */

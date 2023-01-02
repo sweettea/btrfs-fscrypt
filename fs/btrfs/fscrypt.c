@@ -215,6 +215,19 @@ static struct block_device **btrfs_fscrypt_get_devices(struct super_block *sb,
 	return devs;
 }
 
+void btrfs_fscrypt_copy_fscrypt_info(struct btrfs_inode *inode,
+				     struct fscrypt_extent_info *from,
+				     struct fscrypt_extent_info **to_ptr)
+{
+	if (from == NULL) {
+		*to_ptr = NULL;
+		return;
+	}
+
+	fscrypt_get_extent_info_ref(from);
+	*to_ptr = from;
+}
+
 const struct fscrypt_operations btrfs_fscrypt_ops = {
 	.get_context = btrfs_fscrypt_get_context,
 	.set_context = btrfs_fscrypt_set_context,
