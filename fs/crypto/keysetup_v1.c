@@ -182,6 +182,7 @@ find_or_insert_direct_key(struct fscrypt_direct_key *to_insert,
 {
 	unsigned long hash_key;
 	struct fscrypt_direct_key *dk;
+	bool inlinecrypt = fscrypt_using_inline_encryption(ci);
 
 	/*
 	 * Careful: to avoid potentially leaking secret key bytes via timing
@@ -200,7 +201,7 @@ find_or_insert_direct_key(struct fscrypt_direct_key *to_insert,
 			continue;
 		if (ci->ci_mode != dk->dk_mode)
 			continue;
-		if (!fscrypt_is_key_prepared(&dk->dk_key, ci))
+		if (!fscrypt_is_key_prepared(&dk->dk_key, inlinecrypt))
 			continue;
 		if (crypto_memneq(raw_key, dk->dk_raw, ci->ci_mode->keysize))
 			continue;

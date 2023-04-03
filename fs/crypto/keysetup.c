@@ -182,20 +182,21 @@ static int setup_per_mode_enc_key(struct fscrypt_info *ci,
 	u8 mode_key[FSCRYPT_MAX_KEY_SIZE];
 	u8 hkdf_info[sizeof(mode_num) + sizeof(sb->s_uuid)];
 	unsigned int hkdf_infolen = 0;
+	bool inlinecrypt = fscrypt_using_inline_encryption(ci);
 	int err;
 
 	if (WARN_ON(mode_num > FSCRYPT_MODE_MAX))
 		return -EINVAL;
 
 	prep_key = &keys[mode_num];
-	if (fscrypt_is_key_prepared(prep_key, ci)) {
+	if (fscrypt_is_key_prepared(prep_key, inlinecrypt)) {
 		ci->ci_enc_key = *prep_key;
 		return 0;
 	}
 
 	mutex_lock(&fscrypt_mode_key_setup_mutex);
 
-	if (fscrypt_is_key_prepared(prep_key, ci))
+	if (fscrypt_is_key_prepared(prep_key, inlinecrypt))
 		goto done_unlock;
 
 	BUILD_BUG_ON(sizeof(mode_num) != 1);

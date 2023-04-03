@@ -353,7 +353,7 @@ void fscrypt_destroy_inline_crypt_key(struct super_block *sb,
  */
 static inline bool
 fscrypt_is_key_prepared(struct fscrypt_prepared_key *prep_key,
-			const struct fscrypt_info *ci)
+			bool inlinecrypt)
 {
 	/*
 	 * The two smp_load_acquire()'s here pair with the smp_store_release()'s
@@ -363,7 +363,7 @@ fscrypt_is_key_prepared(struct fscrypt_prepared_key *prep_key,
 	 * executing a RELEASE barrier.  We need to use smp_load_acquire() here
 	 * to safely ACQUIRE the memory the other task published.
 	 */
-	if (fscrypt_using_inline_encryption(ci))
+	if (inlinecrypt)
 		return smp_load_acquire(&prep_key->blk_key) != NULL;
 	return smp_load_acquire(&prep_key->tfm) != NULL;
 }
@@ -398,7 +398,7 @@ fscrypt_destroy_inline_crypt_key(struct super_block *sb,
 
 static inline bool
 fscrypt_is_key_prepared(struct fscrypt_prepared_key *prep_key,
-			const struct fscrypt_info *ci)
+			bool inlinecrypt)
 {
 	return smp_load_acquire(&prep_key->tfm) != NULL;
 }
