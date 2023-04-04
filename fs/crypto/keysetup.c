@@ -588,7 +588,7 @@ fscrypt_setup_encryption_info(struct inode *inode,
 
 	/* Derive a secret dirhash key for directories that need it. */
 	if (need_dirhash_key) {
-		res = fscrypt_derive_dirhash_key(ci, mk);
+		res = fscrypt_derive_dirhash_key(crypt_info, mk);
 		if (res)
 			goto out;
 	}
