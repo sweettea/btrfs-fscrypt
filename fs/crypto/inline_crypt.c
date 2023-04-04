@@ -97,7 +97,7 @@ static void fscrypt_log_blk_crypto_impl(struct fscrypt_mode *mode,
  * encryption. Returns an error if getting the devices for the superblock
  * fails.
  */
-int fscrypt_select_encryption_impl(const struct fscrypt_mode *mode,
+int fscrypt_select_encryption_impl(struct fscrypt_mode *mode,
 				   const union fscrypt_policy *policy,
 				   struct super_block *sb,
 				   bool *inlinecrypt_ptr)

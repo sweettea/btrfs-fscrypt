@@ -330,7 +330,7 @@ void fscrypt_destroy_hkdf(struct fscrypt_hkdf *hkdf);
 
 /* inline_crypt.c */
 #ifdef CONFIG_FS_ENCRYPTION_INLINE_CRYPT
-int fscrypt_select_encryption_impl(const struct fscrypt_mode *mode,
+int fscrypt_select_encryption_impl(struct fscrypt_mode *mode,
 				   const union fscrypt_policy *policy,
 				   struct super_block *sb,
 				   bool *inlinecrypt_ptr);
@@ -372,7 +372,7 @@ fscrypt_is_key_prepared(struct fscrypt_prepared_key *prep_key,
 #else /* CONFIG_FS_ENCRYPTION_INLINE_CRYPT */
 
 static inline int
-fscrypt_select_encryption_impl(const struct fscrypt_mode *mode,
+fscrypt_select_encryption_impl(struct fscrypt_mode *mode,
 			       const union fscrypt_policy *policy,
 			       struct super_block *sb,
 			       bool *inlinecrypt_ptr)
