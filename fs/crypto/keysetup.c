@@ -82,7 +82,7 @@ select_encryption_mode(const union fscrypt_policy *policy,
 
 /* Create a symmetric cipher object for the given encryption mode and key */
 static struct crypto_skcipher *
-fscrypt_allocate_skcipher(struct fscrypt_mode *mode, const u8 *raw_key,
+fscrypt_allocate_skcipher(struct fscrypt_mode *mode,
 			  const struct inode *inode)
 {
 	struct crypto_skcipher *tfm;
@@ -137,7 +137,7 @@ int fscrypt_prepare_key(struct fscrypt_prepared_key *prep_key,
 	if (fscrypt_using_inline_encryption(ci))
 		return fscrypt_prepare_inline_crypt_key(prep_key, raw_key, ci);
 
-	tfm = fscrypt_allocate_skcipher(ci->ci_mode, raw_key, ci->ci_inode);
+	tfm = fscrypt_allocate_skcipher(ci->ci_mode, ci->ci_inode);
 	if (IS_ERR(tfm))
 		return PTR_ERR(tfm);
 
