@@ -295,8 +295,7 @@ void fscrypt_hash_inode_number(struct fscrypt_info *ci,
 					      &mk->mk_ino_hash_key);
 }
 
-static int fscrypt_setup_iv_ino_lblk_32_key(struct fscrypt_info *ci,
-					    struct fscrypt_master_key *mk)
+static int fscrypt_setup_ino_hash_key(struct fscrypt_master_key *mk)
 {
 	int err;
 
@@ -321,12 +320,6 @@ unlock:
 			return err;
 	}
 
-	/*
-	 * New inodes may not have an inode number assigned yet.
-	 * Hashing their inode number is delayed until later.
-	 */
-	if (ci->ci_inode->i_ino)
-		fscrypt_hash_inode_number(ci, mk);
 	return 0;
 }
 
@@ -363,7 +356,7 @@ static int fscrypt_setup_v2_file_key(struct fscrypt_info *ci,
 					     HKDF_CONTEXT_IV_INO_LBLK_32_KEY,
 					     true);
 		if (!err)
-			fscrypt_setup_iv_ino_lblk_32_key(ci, mk);
+			err = fscrypt_setup_ino_hash_key(mk);
 	} else {
 		u8 derived_key[FSCRYPT_MAX_KEY_SIZE];
 
@@ -586,12 +579,20 @@ fscrypt_setup_encryption_info(struct inode *inode,
 	if (res)
 		goto out;
 
-	/* Derive a secret dirhash key for directories that need it. */
+	/* Derive a secret dirhash key for directories that need it */
 	if (need_dirhash_key) {
 		res = fscrypt_derive_dirhash_key(crypt_info, mk);
 		if (res)
 			goto out;
 	}
+
+	/*
+	 * The IV_INO_LBLK_32 policy needs a hashed inode number, but new
+	 * inodes may not have an inode number assigned yet.
+	 */
+	if ((policy->v2.flags & FSCRYPT_POLICY_FLAG_IV_INO_LBLK_32)
+	    && inode->i_ino)
+		fscrypt_hash_inode_number(crypt_info, mk);
 
 	/*
 	 * For existing inodes, multiple tasks may race to set ->i_crypt_info.
