@@ -470,14 +470,6 @@ static int find_and_lock_master_key(struct fscrypt_info *ci,
 	struct super_block *sb = ci->ci_inode->i_sb;
 	int err;
 
-	/* Inline encryption only works on contents, i.e. regular files */
-	if (S_ISREG(ci->ci_inode->i_mode)) {
-		err = fscrypt_select_encryption_impl(ci->ci_mode, policy, sb,
-						     &ci->ci_inlinecrypt);
-		if (err)
-			return err;
-	}
-
 	err = fscrypt_policy_to_key_spec(policy, &mk_spec);
 	if (err)
 		return err;
@@ -568,6 +560,17 @@ fscrypt_setup_encryption_info(struct inode *inode,
 	}
 	WARN_ON(mode->ivsize > FSCRYPT_MAX_IV_SIZE);
 	crypt_info->ci_mode = mode;
+
+	/* Decide if we're using inline encryption, which only does
+	 * contents encryption, i.e. regular files) */
+	if (S_ISREG(inode->i_mode)) {
+		res = fscrypt_select_encryption_impl(crypt_info->ci_mode,
+						     &crypt_info->ci_policy,
+						     inode->i_sb,
+						     &crypt_info->ci_inlinecrypt);
+		if (res)
+			goto out;
+	}
 
 	res = find_and_lock_master_key(crypt_info, &mk);
 	if (res)
