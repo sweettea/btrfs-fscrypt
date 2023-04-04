@@ -203,13 +203,11 @@ struct fscrypt_info {
 	/* True if ci_enc_key should be freed when this fscrypt_info is freed */
 	bool ci_owns_key;
 
-#ifdef CONFIG_FS_ENCRYPTION_INLINE_CRYPT
 	/*
 	 * True if this inode will use inline encryption (blk-crypto) instead of
 	 * the traditional filesystem-layer encryption.
 	 */
 	bool ci_inlinecrypt;
-#endif
 
 	/*
 	 * Encryption mode used for this inode.  It corresponds to either the
@@ -332,7 +330,10 @@ void fscrypt_destroy_hkdf(struct fscrypt_hkdf *hkdf);
 
 /* inline_crypt.c */
 #ifdef CONFIG_FS_ENCRYPTION_INLINE_CRYPT
-int fscrypt_select_encryption_impl(struct fscrypt_info *ci);
+int fscrypt_select_encryption_impl(const struct fscrypt_mode *mode,
+				   const union fscrypt_policy *policy,
+				   struct super_block *sb,
+				   bool *inlinecrypt_ptr);
 
 static inline bool
 fscrypt_using_inline_encryption(const struct fscrypt_info *ci)
@@ -370,7 +371,11 @@ fscrypt_is_key_prepared(struct fscrypt_prepared_key *prep_key,
 
 #else /* CONFIG_FS_ENCRYPTION_INLINE_CRYPT */
 
-static inline int fscrypt_select_encryption_impl(struct fscrypt_info *ci)
+static inline int
+fscrypt_select_encryption_impl(const struct fscrypt_mode *mode,
+			       const union fscrypt_policy *policy,
+			       struct super_block *sb,
+			       bool *inlinecrypt_ptr)
 {
 	return 0;
 }

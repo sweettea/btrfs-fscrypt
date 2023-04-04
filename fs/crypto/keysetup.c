@@ -430,19 +430,25 @@ static int setup_file_encryption_key(struct fscrypt_info *ci,
 {
 	struct fscrypt_key_specifier mk_spec;
 	struct fscrypt_master_key *mk;
+	union fscrypt_policy *policy = &ci->ci_policy;
+	struct super_block *sb = ci->ci_inode->i_sb;
 	int err;
 
-	err = fscrypt_select_encryption_impl(ci);
+	/* Inline encryption only works on contents, i.e. regular files */
+	if (S_ISREG(ci->ci_inode->i_mode)) {
+		err = fscrypt_select_encryption_impl(ci->ci_mode, policy, sb,
+						     &ci->ci_inlinecrypt);
+		if (err)
+			return err;
+	}
+
+	err = fscrypt_policy_to_key_spec(policy, &mk_spec);
 	if (err)
 		return err;
 
-	err = fscrypt_policy_to_key_spec(&ci->ci_policy, &mk_spec);
-	if (err)
-		return err;
-
-	mk = fscrypt_find_master_key(ci->ci_inode->i_sb, &mk_spec);
+	mk = fscrypt_find_master_key(sb, &mk_spec);
 	if (!mk) {
-		if (ci->ci_policy.version != FSCRYPT_POLICY_V1)
+		if (policy->version != FSCRYPT_POLICY_V1)
 			return -ENOKEY;
 
 		/*

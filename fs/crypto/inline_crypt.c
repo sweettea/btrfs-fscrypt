@@ -90,23 +90,26 @@ static void fscrypt_log_blk_crypto_impl(struct fscrypt_mode *mode,
 	}
 }
 
-/* Enable inline encryption for this file if supported. */
-int fscrypt_select_encryption_impl(struct fscrypt_info *ci)
+/* Determine whether a given (policy, mode) tuple supports inline encryption
+ * on a given filesystem.
+ *
+ * Sets *inlinecrypt_ptr to true if the given policy+mode could use inline
+ * encryption. Returns an error if getting the devices for the superblock
+ * fails.
+ */
+int fscrypt_select_encryption_impl(const struct fscrypt_mode *mode,
+				   const union fscrypt_policy *policy,
+				   struct super_block *sb,
+				   bool *inlinecrypt_ptr)
 {
-	const struct inode *inode = ci->ci_inode;
-	struct super_block *sb = inode->i_sb;
 	struct blk_crypto_config crypto_cfg;
 	struct block_device **devs;
 	unsigned int num_devs;
-	unsigned int flags = fscrypt_policy_flags(&ci->ci_policy);
+	unsigned int flags = fscrypt_policy_flags(policy);
 	unsigned int i;
 
-	/* The file must need contents encryption, not filenames encryption */
-	if (!S_ISREG(inode->i_mode))
-		return 0;
-
 	/* The crypto mode must have a blk-crypto counterpart */
-	if (ci->ci_mode->blk_crypto_mode == BLK_ENCRYPTION_MODE_INVALID)
+	if (mode->blk_crypto_mode == BLK_ENCRYPTION_MODE_INVALID)
 		return 0;
 
 	/* The filesystem must be mounted with -o inlinecrypt */
@@ -129,7 +132,7 @@ int fscrypt_select_encryption_impl(struct fscrypt_info *ci)
 	 * On all the filesystem's block devices, blk-crypto must support the
 	 * crypto configuration that the file would use.
 	 */
-	crypto_cfg.crypto_mode = ci->ci_mode->blk_crypto_mode;
+	crypto_cfg.crypto_mode = mode->blk_crypto_mode;
 	crypto_cfg.data_unit_size = sb->s_blocksize;
 	crypto_cfg.dun_bytes = fscrypt_get_dun_bytes(sb, flags);
 
@@ -143,9 +146,9 @@ int fscrypt_select_encryption_impl(struct fscrypt_info *ci)
 			goto out_free_devs;
 	}
 
-	fscrypt_log_blk_crypto_impl(ci->ci_mode, devs, num_devs, &crypto_cfg);
+	fscrypt_log_blk_crypto_impl(mode, devs, num_devs, &crypto_cfg);
 
-	ci->ci_inlinecrypt = true;
+	*inlinecrypt_ptr = true;
 out_free_devs:
 	kfree(devs);
 
