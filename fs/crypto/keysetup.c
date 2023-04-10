@@ -106,9 +106,33 @@ select_encryption_mode(const union fscrypt_policy *policy,
 	return ERR_PTR(-EINVAL);
 }
 
-/* Create a symmetric cipher object for the given encryption mode and key */
+/*
+ * Prepare the crypto transform object or blk-crypto key in @prep_key, given the
+ * raw key, encryption mode (@ci->ci_mode), flag indicating which encryption
+ * implementation (fs-layer or blk-crypto) will be used (@ci->ci_inlinecrypt),
+ * and IV generation method (@ci->ci_policy.flags). The relevant member must
+ * already be allocated and set in @prep_key.
+ */
+int fscrypt_prepare_key(struct fscrypt_prepared_key *prep_key,
+			const u8 *raw_key, const struct fscrypt_info *ci)
+{
+	int err;
+	bool inlinecrypt = fscrypt_using_inline_encryption(ci);
+
+	if (inlinecrypt) {
+		err = fscrypt_prepare_inline_crypt_key(prep_key, raw_key, ci);
+	} else {
+		err = crypto_skcipher_setkey(prep_key->tfm, raw_key,
+					     ci->ci_mode->keysize);
+	}
+
+	return err;
+}
+
+
+/* Create a symmetric cipher object for the given encryption mode */
 static struct crypto_skcipher *
-fscrypt_allocate_skcipher(struct fscrypt_mode *mode, const u8 *raw_key,
+fscrypt_allocate_skcipher(struct fscrypt_mode *mode,
 			  const struct inode *inode)
 {
 	struct crypto_skcipher *tfm;
@@ -141,10 +165,6 @@ fscrypt_allocate_skcipher(struct fscrypt_mode *mode, const u8 *raw_key,
 		goto err_free_tfm;
 	}
 	crypto_skcipher_set_flags(tfm, CRYPTO_TFM_REQ_FORBID_WEAK_KEYS);
-	err = crypto_skcipher_setkey(tfm, raw_key, mode->keysize);
-	if (err)
-		goto err_free_tfm;
-
 	return tfm;
 
 err_free_tfm:
@@ -152,21 +172,16 @@ err_free_tfm:
 	return ERR_PTR(err);
 }
 
-/*
- * Prepare the crypto transform object or blk-crypto key in @prep_key, given the
- * raw key, encryption mode (@ci->ci_mode), flag indicating which encryption
- * implementation (fs-layer or blk-crypto) will be used (@ci->ci_inlinecrypt),
- * and IV generation method (@ci->ci_policy.flags).
- */
-int fscrypt_prepare_key(struct fscrypt_prepared_key *prep_key,
-			const u8 *raw_key, const struct fscrypt_info *ci)
+/* Allocate the relevant encryption member for the prepared key */
+int fscrypt_allocate_key_member(struct fscrypt_prepared_key *prep_key,
+				const struct fscrypt_info *ci)
 {
 	struct crypto_skcipher *tfm;
 
 	if (fscrypt_using_inline_encryption(ci))
-		return fscrypt_prepare_inline_crypt_key(prep_key, raw_key, ci);
+		return fscrypt_allocate_inline_crypt_key(prep_key, ci);
 
-	tfm = fscrypt_allocate_skcipher(ci->ci_mode, raw_key, ci->ci_inode);
+	tfm = fscrypt_allocate_skcipher(ci->ci_mode, ci->ci_inode);
 	if (IS_ERR(tfm))
 		return PTR_ERR(tfm);
 	prep_key->tfm = tfm;
@@ -185,11 +200,17 @@ void fscrypt_destroy_prepared_key(struct super_block *sb,
 /* Given a per-file encryption key, set up the file's crypto transform object */
 int fscrypt_set_per_file_enc_key(struct fscrypt_info *ci, const u8 *raw_key)
 {
+	int err;
+
 	ci->ci_enc_key = kzalloc(sizeof(*ci->ci_enc_key), GFP_KERNEL);
 	if (!ci->ci_enc_key)
 		return -ENOMEM;
 
 	ci->ci_enc_key->type = FSCRYPT_KEY_PER_INFO;
+	err = fscrypt_allocate_key_member(ci->ci_enc_key, ci);
+	if (err)
+		return err;
+
 	return fscrypt_prepare_key(ci->ci_enc_key, raw_key, ci);
 }
 
@@ -270,6 +291,10 @@ static int setup_new_mode_prepared_key(struct fscrypt_master_key *mk,
 	 * encryption hardware compliant with the UFS standard.
 	 */
 
+
+	err = fscrypt_allocate_key_member(prep_key, ci);
+	if (err)
+		return err;
 
 	BUILD_BUG_ON(sizeof(mode_num) != 1);
 	BUILD_BUG_ON(sizeof(sb->s_uuid) != 16);

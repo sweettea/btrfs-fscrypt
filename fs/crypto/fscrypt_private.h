@@ -355,6 +355,9 @@ fscrypt_using_inline_encryption(const struct fscrypt_info *ci)
 	return ci->ci_inlinecrypt;
 }
 
+int fscrypt_allocate_inline_crypt_key(struct fscrypt_prepared_key *prep_key,
+				      const struct fscrypt_info *ci);
+
 int fscrypt_prepare_inline_crypt_key(struct fscrypt_prepared_key *prep_key,
 				     const u8 *raw_key,
 				     const struct fscrypt_info *ci);
@@ -386,6 +389,14 @@ static inline bool
 fscrypt_using_inline_encryption(const struct fscrypt_info *ci)
 {
 	return false;
+}
+
+static inline int
+fscrypt_allocate_inline_crypt_key(struct fscrypt_prepared_key *prep_key,
+				  const struct fscrypt_info *ci)
+{
+	WARN_ON(1);
+	return -EOPNOTSUPP;
 }
 
 static inline int
@@ -603,6 +614,9 @@ struct fscrypt_mode {
 };
 
 extern struct fscrypt_mode fscrypt_modes[];
+
+int fscrypt_allocate_key_member(struct fscrypt_prepared_key *prep_key,
+				const struct fscrypt_info *ci);
 
 int fscrypt_prepare_key(struct fscrypt_prepared_key *prep_key,
 			const u8 *raw_key, const struct fscrypt_info *ci);

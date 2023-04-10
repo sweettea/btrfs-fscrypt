@@ -157,15 +157,11 @@ int fscrypt_prepare_inline_crypt_key(struct fscrypt_prepared_key *prep_key,
 	const struct inode *inode = ci->ci_inode;
 	struct super_block *sb = inode->i_sb;
 	enum blk_crypto_mode_num crypto_mode = ci->ci_mode->blk_crypto_mode;
-	struct blk_crypto_key *blk_key;
+	struct blk_crypto_key *blk_key = prep_key->blk_key;
 	struct block_device **devs;
 	unsigned int num_devs;
 	unsigned int i;
 	int err;
-
-	blk_key = kmalloc(sizeof(*blk_key), GFP_KERNEL);
-	if (!blk_key)
-		return -ENOMEM;
 
 	err = blk_crypto_init_key(blk_key, raw_key, crypto_mode,
 				  fscrypt_get_dun_bytes(ci), sb->s_blocksize);
@@ -191,12 +187,23 @@ int fscrypt_prepare_inline_crypt_key(struct fscrypt_prepared_key *prep_key,
 		goto fail;
 	}
 
-	prep_key->blk_key = blk_key;
 	return 0;
 
 fail:
 	kfree_sensitive(blk_key);
 	return err;
+}
+
+int fscrypt_allocate_inline_crypt_key(struct fscrypt_prepared_key *prep_key,
+				     const struct fscrypt_info *ci)
+{
+	struct blk_crypto_key *blk_key = kmalloc(sizeof(*blk_key), GFP_KERNEL);
+
+	if (!blk_key)
+		return -ENOMEM;
+
+	prep_key->blk_key = blk_key;
+	return 0;
 }
 
 void fscrypt_destroy_inline_crypt_key(struct super_block *sb,
