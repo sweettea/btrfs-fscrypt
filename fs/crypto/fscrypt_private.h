@@ -30,6 +30,11 @@
 #define FSCRYPT_CONTEXT_V1	1
 #define FSCRYPT_CONTEXT_V2	2
 
+#define FSCRYPT_POLICY_FLAGS_KEY_MASK		\
+	(FSCRYPT_POLICY_FLAG_DIRECT_KEY		\
+	 | FSCRYPT_POLICY_FLAG_IV_INO_LBLK_64	\
+	 | FSCRYPT_POLICY_FLAG_IV_INO_LBLK_32)
+
 /* Keep this in sync with include/uapi/linux/fscrypt.h */
 #define FSCRYPT_MODE_MAX	FSCRYPT_MODE_AES_256_HCTR2
 
@@ -185,11 +190,15 @@ struct fscrypt_symlink_data {
  *			    part of a fscrypt_master_key, shared between all
  *			    users of this master key having this mode and
  *			    policy.
+ * @FSCRYPT_KEY_POOLED: this prepared key is embedded in a
+ *			fscrypt_pooled_prepared_key. It should be returned to
+ *			its pool when no longer in use.
  */
 enum fscrypt_prepared_key_type {
 	FSCRYPT_KEY_PER_INFO = 1,
 	FSCRYPT_KEY_DIRECT_V1,
 	FSCRYPT_KEY_MASTER_KEY,
+	FSCRYPT_KEY_POOLED,
 } __packed;
 
 /**

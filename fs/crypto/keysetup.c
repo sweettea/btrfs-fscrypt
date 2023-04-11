@@ -89,6 +89,10 @@ struct fscrypt_mode fscrypt_modes[] = {
 
 static DEFINE_MUTEX(fscrypt_mode_key_setup_mutex);
 
+struct fscrypt_pooled_prepared_key {
+	struct fscrypt_prepared_key prep_key;
+};
+
 static struct fscrypt_mode *
 select_encryption_mode(const union fscrypt_policy *policy,
 		       const struct inode *inode)
@@ -117,6 +121,21 @@ static int lock_master_key(struct fscrypt_master_key *mk)
 	return 0;
 }
 
+static inline bool
+fscrypt_using_pooled_prepared_key(const struct fscrypt_info *ci)
+{
+	if (ci->ci_policy.version != FSCRYPT_POLICY_V2)
+		return false;
+	if (ci->ci_policy.v2.flags & FSCRYPT_POLICY_FLAGS_KEY_MASK)
+		return false;
+	if (fscrypt_using_inline_encryption(ci))
+		return false;
+
+	if (!S_ISREG(ci->ci_inode->i_mode))
+		return false;
+	return false;
+}
+
 /*
  * Prepare the crypto transform object or blk-crypto key in @prep_key, given the
  * raw key, encryption mode (@ci->ci_mode), flag indicating which encryption
@@ -139,7 +158,6 @@ int fscrypt_prepare_key(struct fscrypt_prepared_key *prep_key,
 
 	return err;
 }
-
 
 /* Create a symmetric cipher object for the given encryption mode */
 static struct crypto_skcipher *
@@ -213,14 +231,31 @@ int fscrypt_set_per_file_enc_key(struct fscrypt_info *ci, const u8 *raw_key)
 {
 	int err;
 
-	ci->ci_enc_key = kzalloc(sizeof(*ci->ci_enc_key), GFP_KERNEL);
-	if (!ci->ci_enc_key)
-		return -ENOMEM;
+	if (fscrypt_using_pooled_prepared_key(ci)) {
+		struct fscrypt_pooled_prepared_key *pooled_key;
 
-	ci->ci_enc_key->type = FSCRYPT_KEY_PER_INFO;
-	err = fscrypt_allocate_key_member(ci->ci_enc_key, ci);
-	if (err)
-		return err;
+		pooled_key = kzalloc(sizeof(*pooled_key), GFP_KERNEL);
+		if (!pooled_key)
+			return -ENOMEM;
+
+		err = fscrypt_allocate_key_member(&pooled_key->prep_key, ci);
+		if (err) {
+			kfree(pooled_key);
+			return err;
+		}
+
+		pooled_key->prep_key.type = FSCRYPT_KEY_POOLED;
+		ci->ci_enc_key = &pooled_key->prep_key;
+	} else {
+		ci->ci_enc_key = kzalloc(sizeof(*ci->ci_enc_key), GFP_KERNEL);
+		if (!ci->ci_enc_key)
+			return -ENOMEM;
+
+		ci->ci_enc_key->type = FSCRYPT_KEY_PER_INFO;
+		err = fscrypt_allocate_key_member(ci->ci_enc_key, ci);
+		if (err)
+			return err;
+	}
 
 	return fscrypt_prepare_key(ci->ci_enc_key, raw_key, ci);
 }
@@ -615,6 +650,17 @@ static void put_crypt_info(struct fscrypt_info *ci)
 			fscrypt_destroy_prepared_key(ci->ci_inode->i_sb,
 						     ci->ci_enc_key);
 			kfree_sensitive(ci->ci_enc_key);
+		}
+		if (type == FSCRYPT_KEY_POOLED) {
+			struct fscrypt_pooled_prepared_key *pooled_key;
+
+			pooled_key = container_of(ci->ci_enc_key,
+						  struct fscrypt_pooled_prepared_key,
+						  prep_key);
+
+			fscrypt_destroy_prepared_key(ci->ci_inode->i_sb,
+						     ci->ci_enc_key);
+			kfree_sensitive(pooled_key);
 		}
 	}
 
