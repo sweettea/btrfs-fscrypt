@@ -624,6 +624,8 @@ struct fscrypt_mode {
 
 extern struct fscrypt_mode fscrypt_modes[];
 
+struct crypto_skcipher *fscrypt_get_contents_tfm(struct fscrypt_info *ci);
+
 int fscrypt_allocate_key_member(struct fscrypt_prepared_key *prep_key,
 				const struct fscrypt_info *ci);
 

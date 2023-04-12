@@ -93,6 +93,10 @@ struct fscrypt_pooled_prepared_key {
 	struct fscrypt_prepared_key prep_key;
 };
 
+/* Forward declaration so that all the prepared key handling can stay together */
+static int fscrypt_setup_v2_file_key(struct fscrypt_info *ci,
+				     struct fscrypt_master_key *mk);
+
 static struct fscrypt_mode *
 select_encryption_mode(const union fscrypt_policy *policy,
 		       const struct inode *inode)
@@ -157,6 +161,31 @@ int fscrypt_prepare_key(struct fscrypt_prepared_key *prep_key,
 	}
 
 	return err;
+}
+
+struct crypto_skcipher *fscrypt_get_contents_tfm(struct fscrypt_info *ci)
+{
+	int err;
+	struct fscrypt_master_key *mk = ci->ci_master_key;
+	unsigned int allocflags;
+
+	if (!fscrypt_using_pooled_prepared_key(ci))
+		return ci->ci_enc_key->tfm;
+
+	err = lock_master_key(mk);
+	if (err) {
+		up_read(&mk->mk_sem);
+		return ERR_PTR(err);
+	}
+
+	allocflags = memalloc_nofs_save();
+	err = fscrypt_setup_v2_file_key(ci, mk);
+	up_read(&mk->mk_sem);
+	memalloc_nofs_restore(allocflags);
+	if (err)
+		return ERR_PTR(err);
+
+	return ci->ci_enc_key->tfm;
 }
 
 /* Create a symmetric cipher object for the given encryption mode */
@@ -234,6 +263,9 @@ int fscrypt_set_per_file_enc_key(struct fscrypt_info *ci, const u8 *raw_key)
 	if (fscrypt_using_pooled_prepared_key(ci)) {
 		struct fscrypt_pooled_prepared_key *pooled_key;
 
+		if (ci->ci_enc_key)
+			return fscrypt_prepare_key(ci->ci_enc_key, raw_key, ci);
+
 		pooled_key = kzalloc(sizeof(*pooled_key), GFP_KERNEL);
 		if (!pooled_key)
 			return -ENOMEM;
@@ -246,6 +278,7 @@ int fscrypt_set_per_file_enc_key(struct fscrypt_info *ci, const u8 *raw_key)
 
 		pooled_key->prep_key.type = FSCRYPT_KEY_POOLED;
 		ci->ci_enc_key = &pooled_key->prep_key;
+		return 0;
 	} else {
 		ci->ci_enc_key = kzalloc(sizeof(*ci->ci_enc_key), GFP_KERNEL);
 		if (!ci->ci_enc_key)

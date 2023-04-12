@@ -108,9 +108,11 @@ int fscrypt_crypt_block(const struct inode *inode, fscrypt_direction_t rw,
 	DECLARE_CRYPTO_WAIT(wait);
 	struct scatterlist dst, src;
 	struct fscrypt_info *ci = inode->i_crypt_info;
-	struct crypto_skcipher *tfm = ci->ci_enc_key->tfm;
+	struct crypto_skcipher *tfm = fscrypt_get_contents_tfm(ci);
 	int res = 0;
 
+	if (IS_ERR(tfm))
+		return PTR_ERR(tfm);
 	if (WARN_ON_ONCE(len <= 0))
 		return -EINVAL;
 	if (WARN_ON_ONCE(len % FSCRYPT_CONTENTS_ALIGNMENT != 0))
