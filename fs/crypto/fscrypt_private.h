@@ -457,6 +457,19 @@ struct fscrypt_master_key_secret {
 } __randomize_layout;
 
 /*
+ * fscrypt_key_pool - a management structure which handles a number of opaque
+ * fscrypt_pooled_prepared_keys (in keysetup.c).
+ */
+struct fscrypt_key_pool {
+	/* Mutex protecting all the fields here */
+	struct mutex mutex;
+	/* A list of active keys */
+	struct list_head active_keys;
+	/* Inactive keys available for use */
+	struct list_head free_keys;
+};
+
+/*
  * fscrypt_master_key - an in-use master key
  *
  * This represents a master encryption key which has been added to the
@@ -545,6 +558,7 @@ struct fscrypt_master_key {
 	struct fscrypt_prepared_key mk_direct_keys[FSCRYPT_MODE_MAX + 1];
 	struct fscrypt_prepared_key mk_iv_ino_lblk_64_keys[FSCRYPT_MODE_MAX + 1];
 	struct fscrypt_prepared_key mk_iv_ino_lblk_32_keys[FSCRYPT_MODE_MAX + 1];
+	struct fscrypt_key_pool mk_key_pools[FSCRYPT_MODE_MAX + 1];
 
 	/* Hash key for inode numbers.  Initialized only when needed. */
 	siphash_key_t		mk_ino_hash_key;
@@ -623,6 +637,9 @@ struct fscrypt_mode {
 };
 
 extern struct fscrypt_mode fscrypt_modes[];
+
+void fscrypt_init_key_pool(struct fscrypt_key_pool *pool, size_t mode_num);
+void fscrypt_destroy_key_pool(struct fscrypt_key_pool *pool);
 
 struct crypto_skcipher *fscrypt_get_contents_tfm(struct fscrypt_info *ci);
 

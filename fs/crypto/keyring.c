@@ -76,6 +76,10 @@ void fscrypt_put_master_key(struct fscrypt_master_key *mk)
 	WARN_ON_ONCE(refcount_read(&mk->mk_active_refs) != 0);
 	key_put(mk->mk_users);
 	mk->mk_users = NULL;
+
+	for (int i = 0; i <= FSCRYPT_MODE_MAX; i++)
+		fscrypt_destroy_key_pool(&mk->mk_key_pools[i]);
+
 	call_rcu(&mk->mk_rcu_head, fscrypt_free_master_key);
 }
 
@@ -428,6 +432,9 @@ static int add_new_master_key(struct super_block *sb,
 
 	INIT_LIST_HEAD(&mk->mk_decrypted_inodes);
 	spin_lock_init(&mk->mk_decrypted_inodes_lock);
+
+	for (size_t i = 0; i <= FSCRYPT_MODE_MAX; i++)
+		fscrypt_init_key_pool(&mk->mk_key_pools[i], i);
 
 	if (mk_spec->type == FSCRYPT_KEY_SPEC_TYPE_IDENTIFIER) {
 		err = allocate_master_key_users_keyring(mk);
