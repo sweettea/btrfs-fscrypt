@@ -92,11 +92,13 @@ static DEFINE_MUTEX(fscrypt_mode_key_setup_mutex);
 struct fscrypt_pooled_prepared_key {
 	/*
 	 * Must be held when the prep key is in use or the key is being
-	 * returned.
+	 * returned. Must not be held for interactions with pool_link and
+	 * pool_lru_link, which are protected by the pool locks.
 	 */
 	struct mutex mutex;
 	struct fscrypt_prepared_key prep_key;
 	struct list_head pool_link;
+	struct list_head pool_lru_link;
 	/* NULL when it's in the pool. */
 	struct fscrypt_info *owner;
 };
@@ -202,6 +204,18 @@ get_pooled_key_owner(struct fscrypt_pooled_prepared_key *key)
 }
 
 /*
+ * Must be called with the key lock held and the pool lock not held.
+ */
+static void update_lru(struct fscrypt_key_pool *pool,
+		       struct fscrypt_pooled_prepared_key *key)
+{
+	mutex_lock(&pool->lru_mutex);
+	/* Bump this key up to the most recent end of the pool's lru list. */
+	list_move_tail(&pool->active_lru, &key->pool_lru_link);
+	mutex_unlock(&pool->lru_mutex);
+}
+
+/*
  * Lock the prepared key currently in ci->ci_enc_key, if it hasn't been stolen
  * for the use of some other ci. Once this function succeeds, the prepared
  * key cannot be stolen by another ci until fscrypt_unlock_key_if_pooled() is
@@ -215,6 +229,9 @@ static int fscrypt_lock_pooled_key(struct fscrypt_info *ci)
 	struct fscrypt_pooled_prepared_key *pooled_key =
 		container_of(ci->ci_enc_key, struct fscrypt_pooled_prepared_key,
 			     prep_key);
+	struct fscrypt_master_key *mk = ci->ci_master_key;
+	const u8 mode_num = ci->ci_mode - fscrypt_modes;
+	struct fscrypt_key_pool *pool = &mk->mk_key_pools[mode_num];
 
 	/* Peek to see if someone's definitely stolen the pooled key */
 	if (get_pooled_key_owner(pooled_key) != ci)
@@ -232,6 +249,8 @@ static int fscrypt_lock_pooled_key(struct fscrypt_info *ci)
 		mutex_unlock(&pooled_key->mutex);
 		goto stolen;
 	}
+
+	update_lru(pool, pooled_key);
 
 	return 0;
 
@@ -270,12 +289,16 @@ static void __fscrypt_free_one_free_key(struct fscrypt_key_pool *pool)
 	pool->count--;
 }
 
+/* Must be called with the pool mutex held. Releases it. */
 static void __fscrypt_return_key_to_pool(struct fscrypt_key_pool *pool,
 					 struct fscrypt_pooled_prepared_key *key)
 {
 	/* Pairs with the acquire in get_pooled_key_owner() */
 	smp_store_release(&key->owner, NULL);
 	list_move(&key->pool_link, &pool->free_keys);
+	mutex_lock(&pool->lru_mutex);
+	list_del_init(&key->pool_lru_link);
+	mutex_unlock(&pool->lru_mutex);
 	mutex_unlock(&key->mutex);
 	if (pool->count > pool->desired)
 		__fscrypt_free_one_free_key(pool);
@@ -323,6 +346,7 @@ static int fscrypt_allocate_new_pooled_key(struct fscrypt_key_pool *pool,
 	pooled_key->prep_key.type = FSCRYPT_KEY_POOLED;
 	mutex_init(&pooled_key->mutex);
 	INIT_LIST_HEAD(&pooled_key->pool_link);
+	INIT_LIST_HEAD(&pooled_key->pool_lru_link);
 	mutex_lock(&pool->mutex);
 	pool->count++;
 	pool->desired++;
@@ -334,8 +358,15 @@ static int fscrypt_allocate_new_pooled_key(struct fscrypt_key_pool *pool,
 static struct fscrypt_pooled_prepared_key *
 fscrypt_select_victim_key(struct fscrypt_key_pool *pool)
 {
-	return list_first_entry(&pool->active_keys,
-				struct fscrypt_pooled_prepared_key, pool_link);
+	struct fscrypt_pooled_prepared_key *key;
+
+	mutex_lock(&pool->lru_mutex);
+	key = list_first_entry(&pool->active_lru,
+			       struct fscrypt_pooled_prepared_key,
+			       pool_lru_link);
+	list_del_init(&key->pool_lru_link);
+	mutex_unlock(&pool->lru_mutex);
+	return key;
 }
 
 static void fscrypt_steal_an_active_key(struct fscrypt_key_pool *pool)
@@ -399,7 +430,9 @@ void fscrypt_init_key_pool(struct fscrypt_key_pool *pool, size_t modenum)
 	struct fscrypt_mode *mode = &fscrypt_modes[modenum];
 
 	mutex_init(&pool->mutex);
+	mutex_init(&pool->lru_mutex);
 	INIT_LIST_HEAD(&pool->active_keys);
+	INIT_LIST_HEAD(&pool->active_lru);
 	INIT_LIST_HEAD(&pool->free_keys);
 
 	/*

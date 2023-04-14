@@ -461,7 +461,7 @@ struct fscrypt_master_key_secret {
  * fscrypt_pooled_prepared_keys (in keysetup.c).
  */
 struct fscrypt_key_pool {
-	/* Mutex protecting all the fields here */
+	/* Mutex protecting almost everything */
 	struct mutex mutex;
 	/* A list of active keys */
 	struct list_head active_keys;
@@ -471,6 +471,10 @@ struct fscrypt_key_pool {
 	size_t count;
 	/* Count of keys desired. Oft equal to count, but can be less. */
 	size_t desired;
+	/* Mutex protecting the lru list*/
+	struct mutex lru_mutex;
+	/* Same list of active keys, just ordered by usage. Head is oldest. */
+	struct list_head active_lru;
 };
 
 /*
