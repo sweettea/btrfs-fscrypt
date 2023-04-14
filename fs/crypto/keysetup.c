@@ -254,6 +254,22 @@ void fscrypt_unlock_key_if_pooled(struct fscrypt_info *ci)
 	mutex_unlock(&pooled_key->mutex);
 }
 
+/*
+ * Free one key from the free list.
+ */
+static void __fscrypt_free_one_free_key(struct fscrypt_key_pool *pool)
+{
+	struct fscrypt_pooled_prepared_key *tmp;
+
+	tmp = list_first_entry(&pool->free_keys,
+			       struct fscrypt_pooled_prepared_key,
+			       pool_link);
+	fscrypt_destroy_prepared_key(NULL, &tmp->prep_key);
+	list_del_init(&tmp->pool_link);
+	kfree(tmp);
+	pool->count--;
+}
+
 static void __fscrypt_return_key_to_pool(struct fscrypt_key_pool *pool,
 					 struct fscrypt_pooled_prepared_key *key)
 {
@@ -261,6 +277,8 @@ static void __fscrypt_return_key_to_pool(struct fscrypt_key_pool *pool,
 	smp_store_release(&key->owner, NULL);
 	list_move(&key->pool_link, &pool->free_keys);
 	mutex_unlock(&key->mutex);
+	if (pool->count > pool->desired)
+		__fscrypt_free_one_free_key(pool);
 	mutex_unlock(&pool->mutex);
 }
 
@@ -306,6 +324,8 @@ static int fscrypt_allocate_new_pooled_key(struct fscrypt_key_pool *pool,
 	mutex_init(&pooled_key->mutex);
 	INIT_LIST_HEAD(&pooled_key->pool_link);
 	mutex_lock(&pool->mutex);
+	pool->count++;
+	pool->desired++;
 	mutex_lock(&pooled_key->mutex);
 	__fscrypt_return_key_to_pool(pool, pooled_key);
 	return 0;
@@ -360,6 +380,18 @@ static int fscrypt_get_key_from_pool(struct fscrypt_key_pool *pool,
 }
 
 /*
+ * Shrink the pool by one key.
+ */
+static void fscrypt_shrink_key_pool(struct fscrypt_key_pool *pool)
+{
+	mutex_lock(&pool->mutex);
+	pool->desired--;
+	if (!list_empty(&pool->free_keys))
+		__fscrypt_free_one_free_key(pool);
+	mutex_unlock(&pool->mutex);
+}
+
+/*
  * Do initial setup for a particular key pool, allocated as part of an array
  */
 void fscrypt_init_key_pool(struct fscrypt_key_pool *pool, size_t modenum)
@@ -396,14 +428,9 @@ void fscrypt_destroy_key_pool(struct fscrypt_key_pool *pool)
 		list_del_init(&tmp->pool_link);
 		kfree(tmp);
 	}
-	while (!list_empty(&pool->free_keys)) {
-		tmp = list_first_entry(&pool->free_keys,
-				       struct fscrypt_pooled_prepared_key,
-				       pool_link);
-		fscrypt_destroy_prepared_key(NULL, &tmp->prep_key);
-		list_del_init(&tmp->pool_link);
-		kfree(tmp);
-	}
+	while (!list_empty(&pool->free_keys))
+		__fscrypt_free_one_free_key(pool);
+
 	mutex_unlock(&pool->mutex);
 }
 

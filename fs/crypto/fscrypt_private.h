@@ -467,6 +467,10 @@ struct fscrypt_key_pool {
 	struct list_head active_keys;
 	/* Inactive keys available for use */
 	struct list_head free_keys;
+	/* Count of keys currently managed */
+	size_t count;
+	/* Count of keys desired. Oft equal to count, but can be less. */
+	size_t desired;
 };
 
 /*
