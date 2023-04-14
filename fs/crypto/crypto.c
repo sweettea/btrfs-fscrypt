@@ -113,16 +113,22 @@ int fscrypt_crypt_block(const struct inode *inode, fscrypt_direction_t rw,
 
 	if (IS_ERR(tfm))
 		return PTR_ERR(tfm);
-	if (WARN_ON_ONCE(len <= 0))
-		return -EINVAL;
-	if (WARN_ON_ONCE(len % FSCRYPT_CONTENTS_ALIGNMENT != 0))
-		return -EINVAL;
 
+	if (WARN_ON_ONCE(len <= 0)) {
+		res = -EINVAL;
+		goto unlock;
+	}
+	if (WARN_ON_ONCE(len % FSCRYPT_CONTENTS_ALIGNMENT != 0)) {
+		res = -EINVAL;
+		goto unlock;
+	}
 	fscrypt_generate_iv(&iv, lblk_num, ci);
 
 	req = skcipher_request_alloc(tfm, gfp_flags);
-	if (!req)
-		return -ENOMEM;
+	if (!req) {
+		res = -ENOMEM;
+		goto unlock;
+	}
 
 	skcipher_request_set_callback(
 		req, CRYPTO_TFM_REQ_MAY_BACKLOG | CRYPTO_TFM_REQ_MAY_SLEEP,
@@ -141,9 +147,11 @@ int fscrypt_crypt_block(const struct inode *inode, fscrypt_direction_t rw,
 	if (res) {
 		fscrypt_err(inode, "%scryption failed for block %llu: %d",
 			    (rw == FS_DECRYPT ? "De" : "En"), lblk_num, res);
-		return res;
 	}
-	return 0;
+
+unlock:
+	fscrypt_unlock_key_if_pooled(ci);
+	return res;
 }
 
 /**

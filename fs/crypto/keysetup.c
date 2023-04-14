@@ -97,6 +97,8 @@ struct fscrypt_pooled_prepared_key {
 	struct mutex mutex;
 	struct fscrypt_prepared_key prep_key;
 	struct list_head pool_link;
+	/* NULL when it's in the pool. */
+	struct fscrypt_info *owner;
 };
 
 /* Forward declaration so that all the prepared key handling can stay together */
@@ -188,12 +190,96 @@ fscrypt_using_pooled_prepared_key(const struct fscrypt_info *ci)
 	return false;
 }
 
-static void fscrypt_return_key_to_pool(struct fscrypt_key_pool *pool,
-				       struct fscrypt_pooled_prepared_key *key)
+static struct fscrypt_info *
+get_pooled_key_owner(struct fscrypt_pooled_prepared_key *key)
 {
-	mutex_lock(&pool->mutex);
+	/*
+	 * Pairs with the smp_store_release() in fscrypt_get_key_from_pool()
+	 * and __fscrypt_return_key_to_pool() below. The owner is
+	 * potentially unstable unless the key's lock is taken.
+	 */
+	return smp_load_acquire(&key->owner);
+}
+
+/*
+ * Lock the prepared key currently in ci->ci_enc_key, if it hasn't been stolen
+ * for the use of some other ci. Once this function succeeds, the prepared
+ * key cannot be stolen by another ci until fscrypt_unlock_key_if_pooled() is
+ * called.
+ *
+ * Returns 0 if the lock was successful, -ESTALE if the pooled key is now owned
+ * by some other ci (and ci->ci_enc_key is reset to NULL)
+ */
+static int fscrypt_lock_pooled_key(struct fscrypt_info *ci)
+{
+	struct fscrypt_pooled_prepared_key *pooled_key =
+		container_of(ci->ci_enc_key, struct fscrypt_pooled_prepared_key,
+			     prep_key);
+
+	/* Peek to see if someone's definitely stolen the pooled key */
+	if (get_pooled_key_owner(pooled_key) != ci)
+		goto stolen;
+
+	/*
+	 * Try to grab the lock. If we don't immediately succeed, some other
+	 * ci has stolen the key.
+	 */
+	if (!mutex_trylock(&pooled_key->mutex))
+		goto stolen;
+
+	/* We got the lock! Make sure we're still the owner. */
+	if (get_pooled_key_owner(pooled_key) != ci) {
+		mutex_unlock(&pooled_key->mutex);
+		goto stolen;
+	}
+
+	return 0;
+
+stolen:
+	ci->ci_enc_key = NULL;
+	return -ESTALE;
+}
+
+void fscrypt_unlock_key_if_pooled(struct fscrypt_info *ci)
+{
+	struct fscrypt_pooled_prepared_key *pooled_key;
+
+	if (!fscrypt_using_pooled_prepared_key(ci))
+		return;
+
+	pooled_key = container_of(ci->ci_enc_key,
+				  struct fscrypt_pooled_prepared_key,
+				  prep_key);
+
+	mutex_unlock(&pooled_key->mutex);
+}
+
+static void __fscrypt_return_key_to_pool(struct fscrypt_key_pool *pool,
+					 struct fscrypt_pooled_prepared_key *key)
+{
+	/* Pairs with the acquire in get_pooled_key_owner() */
+	smp_store_release(&key->owner, NULL);
 	list_move(&key->pool_link, &pool->free_keys);
 	mutex_unlock(&pool->mutex);
+	mutex_unlock(&key->mutex);
+}
+
+static void fscrypt_return_key_to_pool(struct fscrypt_info *ci)
+{
+	struct fscrypt_pooled_prepared_key *pooled_key;
+	const u8 mode_num = ci->ci_mode - fscrypt_modes;
+	struct fscrypt_master_key *mk = ci->ci_master_key;
+
+	mutex_lock(&pool->mutex);
+	/* Try to lock the key. If we don't, it's already been stolen. */
+	if (fscrypt_lock_pooled_key(ci) != 0)
+		return;
+
+	pooled_key = container_of(ci->ci_enc_key,
+				  struct fscrypt_pooled_prepared_key,
+				  prep_key);
+
+	__fscrypt_return_key_to_pool(&mk->mk_key_pools[mode_num], pooled_key);
 }
 
 static int fscrypt_allocate_new_pooled_key(struct fscrypt_key_pool *pool,
@@ -216,29 +302,34 @@ static int fscrypt_allocate_new_pooled_key(struct fscrypt_key_pool *pool,
 	pooled_key->prep_key.type = FSCRYPT_KEY_POOLED;
 	mutex_init(&pooled_key->mutex);
 	INIT_LIST_HEAD(&pooled_key->pool_link);
-	fscrypt_return_key_to_pool(pool, pooled_key);
+	mutex_lock(&pooled_key->mutex);
+	__fscrypt_return_key_to_pool(pool, pooled_key);
 	return 0;
 }
 
 /*
  * Gets a key out of the free list, and locks it for use.
  */
-static struct fscrypt_pooled_prepared_key *
-fscrypt_get_key_from_pool(struct fscrypt_key_pool *pool)
+static int fscrypt_get_key_from_pool(struct fscrypt_key_pool *pool,
+				     struct fscrypt_info *ci)
 {
 	struct fscrypt_pooled_prepared_key *key;
 
 	mutex_lock(&pool->mutex);
 	if (WARN_ON_ONCE(list_empty(&pool->free_keys))) {
 		mutex_unlock(&pool->mutex);
-		return ERR_PTR(-EBUSY);
+		return -EBUSY;
 	}
 	key = list_first_entry(&pool->free_keys,
 			       struct fscrypt_pooled_prepared_key, pool_link);
 
+	/* Pairs with the acquire in get_pooled_key_owner() */
+	smp_store_release(&key->owner, ci);
+	ci->ci_enc_key = &key->prep_key;
 	list_move(&key->pool_link, &pool->active_keys);
+
 	mutex_unlock(&pool->mutex);
-	return key;
+	return 0;
 }
 
 /*
@@ -317,18 +408,39 @@ struct crypto_skcipher *fscrypt_get_contents_tfm(struct fscrypt_info *ci)
 	int err;
 	struct fscrypt_master_key *mk = ci->ci_master_key;
 	unsigned int allocflags;
+	const u8 mode_num = ci->ci_mode - fscrypt_modes;
+	struct fscrypt_key_pool *pool = &mk->mk_key_pools[mode_num];
 
 	if (!fscrypt_using_pooled_prepared_key(ci))
 		return ci->ci_enc_key->tfm;
 
-	if (ci->ci_enc_key)
-		return ci->ci_enc_key->tfm;
+	/* do we need to set it up? */
+	if (!ci->ci_enc_key)
+		goto lock_for_new_key;
+
+	if (fscrypt_lock_pooled_key(ci) != 0)
+		goto lock_for_new_key;
+
+	return ci->ci_enc_key->tfm;
+
+lock_for_new_key:
 
 	err = lock_master_key(mk);
 	if (err) {
 		up_read(&mk->mk_sem);
 		return ERR_PTR(err);
 	}
+
+setup_new_key:
+	err = fscrypt_get_key_from_pool(pool, ci);
+	if (err) {
+		up_read(&mk->mk_sem);
+		return ERR_PTR(err);
+	}
+
+	/* Make sure nobody stole our fresh key already */
+	if (fscrypt_lock_pooled_key(ci) != 0)
+		goto setup_new_key;
 
 	allocflags = memalloc_nofs_save();
 	err = fscrypt_setup_v2_file_key(ci, mk);
@@ -371,20 +483,6 @@ int fscrypt_set_per_file_enc_key(struct fscrypt_info *ci, const u8 *raw_key)
 	int err;
 
 	if (fscrypt_using_pooled_prepared_key(ci)) {
-		struct fscrypt_pooled_prepared_key *pooled_key;
-		struct fscrypt_master_key *mk = ci->ci_master_key;
-		const u8 mode_num = ci->ci_mode - fscrypt_modes;
-		struct fscrypt_key_pool *pool = &mk->mk_key_pools[mode_num];
-
-		err = fscrypt_allocate_new_pooled_key(pool, ci->ci_mode);
-		if (err)
-			return err;
-
-		pooled_key = fscrypt_get_key_from_pool(pool);
-		if (IS_ERR(pooled_key))
-			return PTR_ERR(pooled_key);
-
-		ci->ci_enc_key = &pooled_key->prep_key;
 	} else {
 		ci->ci_enc_key = kzalloc(sizeof(*ci->ci_enc_key), GFP_KERNEL);
 		if (!ci->ci_enc_key)
@@ -797,16 +895,7 @@ static void put_crypt_info(struct fscrypt_info *ci)
 			kfree_sensitive(ci->ci_enc_key);
 		}
 		if (type == FSCRYPT_KEY_POOLED) {
-			struct fscrypt_pooled_prepared_key *pooled_key;
-			const u8 mode_num = ci->ci_mode - fscrypt_modes;
-
-			pooled_key = container_of(ci->ci_enc_key,
-						  struct fscrypt_pooled_prepared_key,
-						  prep_key);
-
-			fscrypt_return_key_to_pool(&mk->mk_key_pools[mode_num],
-						   pooled_key);
-			ci->ci_enc_key = NULL;
+			fscrypt_return_key_to_pool(ci);
 		}
 	}
 
@@ -866,9 +955,19 @@ fscrypt_setup_encryption_info(struct inode *inode,
 	if (res)
 		goto out;
 
-	res = fscrypt_setup_file_key(crypt_info, mk);
-	if (res)
-		goto out;
+	if (!fscrypt_using_pooled_prepared_key(crypt_info)) {
+		res = fscrypt_setup_file_key(crypt_info, mk);
+		if (res)
+			goto out;
+	} else {
+		const u8 mode_num = mode - fscrypt_modes;
+		struct fscrypt_key_pool *pool = &mk->mk_key_pools[mode_num];
+
+		res = fscrypt_allocate_new_pooled_key(pool, mode);
+		if (res)
+			return res;
+	}
+
 
 	/*
 	 * Derive a secret dirhash key for directories that need it. It

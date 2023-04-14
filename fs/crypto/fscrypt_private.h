@@ -642,6 +642,7 @@ void fscrypt_init_key_pool(struct fscrypt_key_pool *pool, size_t mode_num);
 void fscrypt_destroy_key_pool(struct fscrypt_key_pool *pool);
 
 struct crypto_skcipher *fscrypt_get_contents_tfm(struct fscrypt_info *ci);
+void fscrypt_unlock_key_if_pooled(struct fscrypt_info *ci);
 
 int fscrypt_allocate_key_member(struct fscrypt_prepared_key *prep_key,
 				const struct fscrypt_info *ci);
