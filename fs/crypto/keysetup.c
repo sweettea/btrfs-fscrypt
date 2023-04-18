@@ -169,13 +169,7 @@ int fscrypt_prepare_key(struct fscrypt_prepared_key *prep_key,
 	tfm = fscrypt_allocate_skcipher(ci->ci_mode, raw_key, ci->ci_inode);
 	if (IS_ERR(tfm))
 		return PTR_ERR(tfm);
-	/*
-	 * Pairs with the smp_load_acquire() in fscrypt_is_key_prepared().
-	 * I.e., here we publish ->tfm with a RELEASE barrier so that
-	 * concurrent tasks can ACQUIRE it.  Note that this concurrency is only
-	 * possible for per-mode keys, not for per-file keys.
-	 */
-	smp_store_release(&prep_key->tfm, tfm);
+	prep_key->tfm = tfm;
 	return 0;
 }
 
@@ -276,10 +270,6 @@ static int setup_new_mode_prepared_key(struct fscrypt_master_key *mk,
 	 * encryption hardware compliant with the UFS standard.
 	 */
 
-	mutex_lock(&fscrypt_mode_key_setup_mutex);
-
-	if (fscrypt_is_key_prepared(prep_key, ci))
-		goto out_unlock;
 
 	BUILD_BUG_ON(sizeof(mode_num) != 1);
 	BUILD_BUG_ON(sizeof(sb->s_uuid) != 16);
@@ -290,13 +280,11 @@ static int setup_new_mode_prepared_key(struct fscrypt_master_key *mk,
 				  hkdf_context, hkdf_info, hkdf_infolen,
 				  mode_key, mode->keysize);
 	if (err)
-		goto out_unlock;
+		return err;
 	prep_key->type = FSCRYPT_KEY_MASTER_KEY;
 	err = fscrypt_prepare_key(prep_key, mode_key, ci);
 	memzero_explicit(mode_key, mode->keysize);
 
-out_unlock:
-	mutex_unlock(&fscrypt_mode_key_setup_mutex);
 	return err;
 }
 
@@ -315,11 +303,11 @@ static int setup_mode_prepared_key(struct fscrypt_info *ci,
 	if (IS_ERR(prep_key))
 		return PTR_ERR(prep_key);
 
-	if (fscrypt_is_key_prepared(prep_key, ci)) {
-		ci->ci_enc_key = prep_key;
-		return 0;
-	}
-	err = setup_new_mode_prepared_key(mk, prep_key, ci);
+	mutex_lock(&fscrypt_mode_key_setup_mutex);
+	if (!fscrypt_is_key_allocated(prep_key, ci))
+		err = setup_new_mode_prepared_key(mk, prep_key, ci);
+
+	mutex_unlock(&fscrypt_mode_key_setup_mutex);
 	if (err)
 		return err;
 
