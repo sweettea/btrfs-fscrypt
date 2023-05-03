@@ -747,27 +747,48 @@ out:
 int fscrypt_get_encryption_info(struct inode *inode, bool allow_unsupported)
 {
 	int res;
-	union fscrypt_context ctx;
+	union fscrypt_context ctx = { 0 };
 	union fscrypt_policy policy;
 
 	if (fscrypt_has_encryption_key(inode))
 		return 0;
 
-	res = inode->i_sb->s_cop->get_context(inode, &ctx, sizeof(ctx));
-	if (res < 0) {
-		if (res == -ERANGE && allow_unsupported)
-			return 0;
-		fscrypt_warn(inode, "Error %d getting encryption context", res);
-		return res;
-	}
+	if (fscrypt_uses_extent_encryption(inode)) {
+		/*
+		 * Nothing will be encrypted with this info, so we can borrow
+		 * the parent (dir) inode's policy and use a zero nonce.
+		 */
+		struct dentry *dentry = d_find_any_alias(inode);
+		struct dentry *parent_dentry = dget_parent(dentry);
+		struct inode *dir = parent_dentry->d_inode;
+		bool found = false;
 
-	res = fscrypt_policy_from_context(&policy, &ctx, res);
-	if (res) {
-		if (allow_unsupported)
+		if (dir->i_crypt_info) {
+			found = true;
+			policy = dir->i_crypt_info->ci_policy;
+			nonce = dir->i_crypt_info->ci_nonce;
+		}
+		dput(parent_dentry);
+		dput(dentry);
+		if (!found)
 			return 0;
-		fscrypt_warn(inode,
-			     "Unrecognized or corrupt encryption context");
-		return res;
+	} else {
+		res = inode->i_sb->s_cop->get_context(inode, &ctx, sizeof(ctx));
+		if (res < 0) {
+			if (res == -ERANGE && allow_unsupported)
+				return 0;
+			fscrypt_warn(inode, "Error %d getting encryption context", res);
+			return res;
+		}
+
+		res = fscrypt_policy_from_context(&policy, &ctx, res);
+		if (res) {
+			if (allow_unsupported)
+				return 0;
+			fscrypt_warn(inode,
+				     "Unrecognized or corrupt encryption context");
+			return res;
+		}
 	}
 
 	if (!fscrypt_supported_policy(&policy, inode)) {
