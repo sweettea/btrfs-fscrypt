@@ -45,7 +45,9 @@ static int check_extent_in_eb(struct btrfs_backref_walk_ctx *ctx,
 	int root_count;
 	bool cached;
 
-	if (!btrfs_file_extent_compression(eb, fi) &&
+	if (!ctx->ignore_extent_item_pos &&
+	    ctx->extent_item_pos > 0 &&
+	    !btrfs_file_extent_compression(eb, fi) &&
 	    !btrfs_file_extent_encryption(eb, fi) &&
 	    !btrfs_file_extent_other_encoding(eb, fi)) {
 		u64 data_offset;
@@ -552,13 +554,10 @@ static int add_all_parents(struct btrfs_backref_walk_ctx *ctx,
 				count++;
 			else
 				goto next;
-			if (!ctx->ignore_extent_item_pos) {
-				ret = check_extent_in_eb(ctx, &key, eb, fi, &eie);
-				if (ret == BTRFS_ITERATE_EXTENT_INODES_STOP ||
-				    ret < 0)
-					break;
-			}
-			if (ret > 0)
+			ret = check_extent_in_eb(ctx, &key, eb, fi, &eie);
+			if (ret == BTRFS_ITERATE_EXTENT_INODES_STOP || ret < 0)
+				break;
+			else if (ret > 0)
 				goto next;
 			ret = ulist_add_merge_ptr(parents, eb->start,
 						  eie, (void **)&old, GFP_NOFS);
