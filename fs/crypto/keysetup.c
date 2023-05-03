@@ -1042,6 +1042,24 @@ fscrypt_setup_encryption_info(struct inode *inode,
 	if (res)
 		goto out;
 
+	if (fscrypt_uses_extent_encryption(inode)) {
+		const u8 mode_num = mode - fscrypt_modes;
+		struct fscrypt_key_pool *pool = &mk->mk_key_pools[mode_num];
+
+		/*
+		 * If we're using extent encryption, and we've just opened
+		 * a new leaf inode, allocate a new pooled key for an
+		 * extent to use. This means there's one pooled key
+		 * available for the contents of each inode on average,
+		 * which is the same as the usual arrangement of one key
+		 * for each inode. So in theory this should have similar
+		 * performance. We don't care if this fails, since there's
+		 * always already one in the pool.
+		 */
+		fscrypt_allocate_new_pooled_key(pool, mode);
+		goto set_inode;
+	}
+
 	if (!fscrypt_using_pooled_prepared_key(crypt_info)) {
 		res = fscrypt_setup_file_key(crypt_info, mk);
 		if (res)
@@ -1078,6 +1096,7 @@ fscrypt_setup_encryption_info(struct inode *inode,
 			fscrypt_hash_inode_number(crypt_info, mk);
 	}
 
+set_inode:
 	/*
 	 * For existing inodes, multiple tasks may race to set ->i_crypt_info.
 	 * So use cmpxchg_release().  This pairs with the smp_load_acquire() in
@@ -1130,27 +1149,40 @@ out:
 int fscrypt_get_encryption_info(struct inode *inode, bool allow_unsupported)
 {
 	int res;
-	union fscrypt_context ctx;
+	union fscrypt_context ctx = { 0 };
 	union fscrypt_policy policy;
 
 	if (fscrypt_has_encryption_key(inode))
 		return 0;
 
-	res = inode->i_sb->s_cop->get_context(inode, &ctx, sizeof(ctx));
-	if (res < 0) {
-		if (res == -ERANGE && allow_unsupported)
-			return 0;
-		fscrypt_warn(inode, "Error %d getting encryption context", res);
-		return res;
-	}
+	if (fscrypt_uses_extent_encryption(inode)) {
+		/*
+		 * Nothing will be encrypted with this info, so we can borrow
+		 * the parent (dir) inode's policy and use a zero nonce.
+		 */
+		struct dentry *dentry = d_find_any_alias(inode);
+		struct dentry *parent_dentry = dget_parent(dentry);
+		struct inode *dir = parent_dentry->d_inode;
+		policy = dir->i_crypt_info->ci_policy;
+		dput(parent_dentry);
+		dput(dentry);
+	} else {
+		res = inode->i_sb->s_cop->get_context(inode, &ctx, sizeof(ctx));
+		if (res < 0) {
+			if (res == -ERANGE && allow_unsupported)
+				return 0;
+			fscrypt_warn(inode, "Error %d getting encryption context", res);
+			return res;
+		}
 
-	res = fscrypt_policy_from_context(&policy, &ctx, res);
-	if (res) {
-		if (allow_unsupported)
-			return 0;
-		fscrypt_warn(inode,
-			     "Unrecognized or corrupt encryption context");
-		return res;
+		res = fscrypt_policy_from_context(&policy, &ctx, res);
+		if (res) {
+			if (allow_unsupported)
+				return 0;
+			fscrypt_warn(inode,
+				     "Unrecognized or corrupt encryption context");
+			return res;
+		}
 	}
 
 	if (!fscrypt_supported_policy(&policy, inode)) {
