@@ -726,6 +726,26 @@ out:
 	return res;
 }
 
+static bool get_parent_policy_and_nonce(struct inode *inode,
+					union fscrypt_policy *policy,
+					u8 *nonce)
+{
+	struct dentry *dentry = d_find_any_alias(inode);
+	struct dentry *parent_dentry = dget_parent(dentry);
+	struct inode *dir = parent_dentry->d_inode;
+	bool found = false;
+
+	if (dir->i_crypt_info) {
+		found = true;
+		*policy = dir->i_crypt_info->ci_policy;
+		memcpy(nonce, dir->i_crypt_info->ci_nonce,
+		       FSCRYPT_FILE_NONCE_SIZE);
+	}
+	dput(parent_dentry);
+	dput(dentry);
+	return found;
+}
+
 /**
  * fscrypt_get_encryption_info() - set up an inode's encryption key
  * @inode: the inode to set up the key for.  Must be encrypted.
@@ -747,27 +767,39 @@ out:
 int fscrypt_get_encryption_info(struct inode *inode, bool allow_unsupported)
 {
 	int res;
-	union fscrypt_context ctx;
+	union fscrypt_context ctx = { 0 };
 	union fscrypt_policy policy;
+	const u8 *nonce;
+	u8 nonce_bytes[FSCRYPT_FILE_NONCE_SIZE];
 
 	if (fscrypt_has_encryption_key(inode))
 		return 0;
 
-	res = inode->i_sb->s_cop->get_context(inode, &ctx, sizeof(ctx));
-	if (res < 0) {
-		if (res == -ERANGE && allow_unsupported)
+	if (fscrypt_uses_extent_encryption(inode)) {
+		/*
+		 * Nothing will be encrypted with this info, so we can borrow
+		 * the parent (dir) inode's policy and use a zero nonce.
+		 */
+		if (!get_parent_policy_and_nonce(inode, &policy, nonce_bytes))
 			return 0;
-		fscrypt_warn(inode, "Error %d getting encryption context", res);
-		return res;
-	}
+		nonce = nonce_bytes;
+	} else {
+		res = inode->i_sb->s_cop->get_context(inode, &ctx, sizeof(ctx));
+		if (res < 0) {
+			if (res == -ERANGE && allow_unsupported)
+				return 0;
+			fscrypt_warn(inode, "Error %d getting encryption context", res);
+			return res;
+		}
 
-	res = fscrypt_policy_from_context(&policy, &ctx, res);
-	if (res) {
-		if (allow_unsupported)
-			return 0;
-		fscrypt_warn(inode,
-			     "Unrecognized or corrupt encryption context");
-		return res;
+		res = fscrypt_policy_from_context(&policy, &ctx, res);
+		if (res) {
+			if (allow_unsupported)
+				return 0;
+			fscrypt_warn(inode,
+				     "Unrecognized or corrupt encryption context");
+			return res;
+		}
 	}
 
 	if (!fscrypt_supported_policy(&policy, inode)) {
