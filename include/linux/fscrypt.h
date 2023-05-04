@@ -130,6 +130,15 @@ struct fscrypt_operations {
 	bool (*empty_dir)(struct inode *inode);
 
 	/*
+	 * Inform the filesystem that a particular extent must forget its
+	 * fscrypt_info (for instance, for a key removal).
+	 *
+	 * @info_ptr: a pointer to the location storing the fscrypt_info pointer
+	 *            within the opaque extent whose info is to be freed
+	 */
+	void (*forget_extent_info)(struct fscrypt_info **info_ptr);
+
+	/*
 	 * Check whether the filesystem's inode numbers and UUID are stable,
 	 * meaning that they will never be changed even by offline operations
 	 * such as filesystem shrinking and therefore can be used in the
