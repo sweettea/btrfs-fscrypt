@@ -380,10 +380,10 @@ int fscrypt_derive_dirhash_key(struct fscrypt_info *ci,
 void fscrypt_hash_inode_number(struct fscrypt_info *ci,
 			       const struct fscrypt_master_key *mk)
 {
-	WARN_ON_ONCE(ci->ci_inode->i_ino == 0);
+	WARN_ON_ONCE(fscrypt_get_info_ino(ci) == 0);
 	WARN_ON_ONCE(!mk->mk_ino_hash_key_initialized);
 
-	ci->ci_hashed_ino = (u32)siphash_1u64(ci->ci_inode->i_ino,
+	ci->ci_hashed_ino = (u32)siphash_1u64(fscrypt_get_info_ino(ci),
 					      &mk->mk_ino_hash_key);
 }
 
@@ -706,7 +706,7 @@ fscrypt_setup_encryption_info(struct inode *inode,
 		if (res)
 			goto out;
 
-		if (inode->i_ino)
+		if (fscrypt_get_info_ino(crypt_info))
 			fscrypt_hash_inode_number(crypt_info, mk);
 	}
 

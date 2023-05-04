@@ -923,12 +923,12 @@ static int check_for_busy_inodes(struct super_block *sb,
 	}
 
 	{
-		/* select an example file to show for debugging purposes */
-		struct inode *inode =
+		/* select an example info to show for debugging purposes */
+		struct fscrypt_info *ci =
 			list_first_entry(&mk->mk_decrypted_inodes,
 					 struct fscrypt_info,
-					 ci_master_key_link)->ci_inode;
-		ino = inode->i_ino;
+					 ci_master_key_link);
+		ino = fscrypt_get_info_ino(ci);
 	}
 	spin_unlock(&mk->mk_decrypted_inodes_lock);
 

@@ -332,6 +332,24 @@ static inline bool fscrypt_uses_extent_encryption(const struct inode *inode)
 	return false;
 }
 
+/**
+ * fscrypt_get_info_ino() - get the ino or ino equivalent for an info
+ *
+ * @ci: the fscrypt_info in question
+ *
+ * Return: For inode-based encryption, this will return the info's inode's ino.
+ * For extent-based encryption, this will return the extent's ino equivalent
+ * or 0 if it is not implemented.
+ */
+static inline u64 fscrypt_get_info_ino(const struct fscrypt_info *ci)
+{
+	if (ci->ci_inode)
+		return ci->ci_inode->i_ino;
+	if (!ci->ci_sb->s_cop->get_extent_ino_equivalent)
+		return 0;
+	return ci->ci_sb->s_cop->get_extent_ino_equivalent(ci->ci_info_ptr);
+}
+
 /* crypto.c */
 extern struct kmem_cache *fscrypt_info_cachep;
 int fscrypt_initialize(struct super_block *sb);
