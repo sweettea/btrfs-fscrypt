@@ -875,6 +875,16 @@ static void evict_dentries_for_decrypted_inodes(struct fscrypt_master_key *mk)
 
 	list_for_each_entry(ci, &mk->mk_decrypted_inodes, ci_master_key_link) {
 		inode = ci->ci_inode;
+		if (!inode) {
+			if (!ci->ci_sb->s_cop->forget_extent_info)
+				continue;
+
+			spin_unlock(&mk->mk_decrypted_inodes_lock);
+			ci->ci_sb->s_cop->forget_extent_info(ci->ci_info_ptr);
+			spin_lock(&mk->mk_decrypted_inodes_lock);
+			continue;
+		}
+
 		spin_lock(&inode->i_lock);
 		if (inode->i_state & (I_FREEING | I_WILL_FREE | I_NEW)) {
 			spin_unlock(&inode->i_lock);
@@ -887,7 +897,6 @@ static void evict_dentries_for_decrypted_inodes(struct fscrypt_master_key *mk)
 		shrink_dcache_inode(inode);
 		iput(toput_inode);
 		toput_inode = inode;
-
 		spin_lock(&mk->mk_decrypted_inodes_lock);
 	}
 
