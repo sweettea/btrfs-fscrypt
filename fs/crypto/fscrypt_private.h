@@ -241,6 +241,12 @@ struct fscrypt_info {
 	/* Back-pointer to the inode */
 	struct inode *ci_inode;
 
+	/*
+	 * Back-pointer to the info pointer in the extent, for infos owned by
+	 * an extent.
+	 */
+	struct fscrypt_info **ci_info_ptr;
+
 	/* The superblock of the filesystem to which this info pertains */
 	struct super_block *ci_sb;
 
