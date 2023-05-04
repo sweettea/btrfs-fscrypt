@@ -1006,12 +1006,17 @@ static int
 fscrypt_setup_encryption_info(struct inode *inode,
 			      const union fscrypt_policy *policy,
 			      const u8 nonce[FSCRYPT_FILE_NONCE_SIZE],
-			      bool need_dirhash_key)
+			      bool need_dirhash_key,
+			      struct fscrypt_info **info_ptr)
 {
 	struct fscrypt_info *crypt_info;
 	struct fscrypt_mode *mode;
 	struct fscrypt_master_key *mk = NULL;
 	int res;
+	bool info_for_extent = !!info_ptr;
+
+	if (!info_ptr)
+		info_ptr = &inode->i_crypt_info;
 
 	res = fscrypt_initialize(inode->i_sb);
 	if (res)
@@ -1021,7 +1026,11 @@ fscrypt_setup_encryption_info(struct inode *inode,
 	if (!crypt_info)
 		return -ENOMEM;
 
-	crypt_info->ci_inode = inode;
+	if (fscrypt_uses_extent_encryption(inode) && info_for_extent)
+		crypt_info->ci_info_ptr = info_ptr;
+	else
+		crypt_info->ci_inode = inode;
+
 	crypt_info->ci_sb = inode->i_sb;
 	crypt_info->ci_policy = *policy;
 	memcpy(crypt_info->ci_nonce, nonce, FSCRYPT_FILE_NONCE_SIZE);
@@ -1042,7 +1051,7 @@ fscrypt_setup_encryption_info(struct inode *inode,
 	if (res)
 		goto out;
 
-	if (fscrypt_uses_extent_encryption(inode)) {
+	if (fscrypt_uses_extent_encryption(inode) && !info_for_extent) {
 		const u8 mode_num = mode - fscrypt_modes;
 		struct fscrypt_key_pool *pool = &mk->mk_key_pools[mode_num];
 
@@ -1053,10 +1062,11 @@ fscrypt_setup_encryption_info(struct inode *inode,
 		 * available for the contents of each inode on average,
 		 * which is the same as the usual arrangement of one key
 		 * for each inode. So in theory this should have similar
-		 * performance. We don't care if this fails, since there's
-		 * always already one in the pool.
+		 * performance.
 		 */
-		fscrypt_allocate_new_pooled_key(pool, mode);
+		res = fscrypt_allocate_new_pooled_key(pool, mode);
+		if (res)
+			goto out;
 		goto set_inode;
 	}
 
@@ -1103,7 +1113,7 @@ set_inode:
 	 * fscrypt_get_info().  I.e., here we publish ->i_crypt_info with a
 	 * RELEASE barrier so that other tasks can ACQUIRE it.
 	 */
-	if (cmpxchg_release(&inode->i_crypt_info, NULL, crypt_info) == NULL) {
+	if (cmpxchg_release(info_ptr, NULL, crypt_info) == NULL) {
 		/*
 		 * We won the race and set ->i_crypt_info to our crypt_info.
 		 * Now link it into the master key's inode list.
@@ -1137,7 +1147,7 @@ out:
  *		       %false unless the operation being performed is needed in
  *		       order for files (or directories) to be deleted.
  *
- * Set up ->i_crypt_info, if it hasn't already been done.
+ * Set up inode->i_crypt_info, if it hasn't already been done.
  *
  * Note: unless ->i_crypt_info is already set, this isn't %GFP_NOFS-safe.  So
  * generally this shouldn't be called from within a filesystem transaction.
@@ -1149,8 +1159,9 @@ out:
 int fscrypt_get_encryption_info(struct inode *inode, bool allow_unsupported)
 {
 	int res;
-	union fscrypt_context ctx = { 0 };
+	union fscrypt_context ctx;
 	union fscrypt_policy policy;
+	const u8 *nonce;
 
 	if (fscrypt_has_encryption_key(inode))
 		return 0;
@@ -1158,12 +1169,13 @@ int fscrypt_get_encryption_info(struct inode *inode, bool allow_unsupported)
 	if (fscrypt_uses_extent_encryption(inode)) {
 		/*
 		 * Nothing will be encrypted with this info, so we can borrow
-		 * the parent (dir) inode's policy and use a zero nonce.
+		 * the parent (dir) inode's policy and nonce.
 		 */
 		struct dentry *dentry = d_find_any_alias(inode);
 		struct dentry *parent_dentry = dget_parent(dentry);
 		struct inode *dir = parent_dentry->d_inode;
 		policy = dir->i_crypt_info->ci_policy;
+		nonce = dir->i_crypt_info->ci_nonce;
 		dput(parent_dentry);
 		dput(dentry);
 	} else {
@@ -1183,6 +1195,7 @@ int fscrypt_get_encryption_info(struct inode *inode, bool allow_unsupported)
 				     "Unrecognized or corrupt encryption context");
 			return res;
 		}
+		nonce = fscrypt_context_nonce(&ctx);
 	}
 
 	if (!fscrypt_supported_policy(&policy, inode)) {
@@ -1191,10 +1204,10 @@ int fscrypt_get_encryption_info(struct inode *inode, bool allow_unsupported)
 		return -EINVAL;
 	}
 
-	res = fscrypt_setup_encryption_info(inode, &policy,
-					    fscrypt_context_nonce(&ctx),
+	res = fscrypt_setup_encryption_info(inode, &policy, nonce,
 					    IS_CASEFOLDED(inode) &&
-					    S_ISDIR(inode->i_mode));
+					    S_ISDIR(inode->i_mode),
+					    &inode->i_crypt_info);
 
 	if (res == -ENOPKG && allow_unsupported) /* Algorithm unavailable? */
 		res = 0;
@@ -1228,7 +1241,8 @@ int fscrypt_prepare_new_inode(struct inode *dir, struct inode *inode,
 			      bool *encrypt_ret)
 {
 	const union fscrypt_policy *policy;
-	u8 nonce[FSCRYPT_FILE_NONCE_SIZE];
+	u8 nonce_bytes[FSCRYPT_FILE_NONCE_SIZE];
+	const u8 *nonce;
 
 	policy = fscrypt_policy_to_inherit(dir);
 	if (policy == NULL)
@@ -1250,10 +1264,17 @@ int fscrypt_prepare_new_inode(struct inode *dir, struct inode *inode,
 
 	*encrypt_ret = true;
 
-	get_random_bytes(nonce, FSCRYPT_FILE_NONCE_SIZE);
+	if (fscrypt_uses_extent_encryption(inode)) {
+		nonce = dir->i_crypt_info->ci_nonce;
+	} else {
+		get_random_bytes(nonce_bytes, FSCRYPT_FILE_NONCE_SIZE);
+		nonce = nonce_bytes;
+	}
+
 	return fscrypt_setup_encryption_info(inode, policy, nonce,
 					     IS_CASEFOLDED(dir) &&
-					     S_ISDIR(inode->i_mode));
+					     S_ISDIR(inode->i_mode),
+					     &inode->i_crypt_info);
 }
 EXPORT_SYMBOL_GPL(fscrypt_prepare_new_inode);
 
@@ -1266,6 +1287,15 @@ EXPORT_SYMBOL_GPL(fscrypt_prepare_new_inode);
  */
 void fscrypt_put_encryption_info(struct inode *inode)
 {
+	if (fscrypt_uses_extent_encryption(inode)) {
+		struct fscrypt_info *ci = inode->i_crypt_info;
+		struct fscrypt_master_key *mk = ci->ci_master_key;
+		const u8 mode_num = ci->ci_mode - fscrypt_modes;
+		struct fscrypt_key_pool *pool = &mk->mk_key_pools[mode_num];
+
+		fscrypt_shrink_key_pool(pool);
+	}
+
 	put_crypt_info(inode->i_crypt_info);
 	inode->i_crypt_info = NULL;
 }
