@@ -1207,7 +1207,7 @@ int fscrypt_get_encryption_info(struct inode *inode, bool allow_unsupported)
 	res = fscrypt_setup_encryption_info(inode, &policy, nonce,
 					    IS_CASEFOLDED(inode) &&
 					    S_ISDIR(inode->i_mode),
-					    &inode->i_crypt_info);
+					    NULL);
 
 	if (res == -ENOPKG && allow_unsupported) /* Algorithm unavailable? */
 		res = 0;
