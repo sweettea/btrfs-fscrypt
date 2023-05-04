@@ -1274,7 +1274,7 @@ int fscrypt_prepare_new_inode(struct inode *dir, struct inode *inode,
 	return fscrypt_setup_encryption_info(inode, policy, nonce,
 					     IS_CASEFOLDED(dir) &&
 					     S_ISDIR(inode->i_mode),
-					     &inode->i_crypt_info);
+					     NULL);
 }
 EXPORT_SYMBOL_GPL(fscrypt_prepare_new_inode);
 
