@@ -170,6 +170,15 @@ struct fscrypt_operations {
 				      int *ino_bits_ret, int *lblk_bits_ret);
 
 	/*
+	 * Get the inode number equivalent for filesystems using per-extent
+	 * encryption keys.
+	 *
+	 * This function only needs to be implemented if support for one of the
+	 * FSCRYPT_POLICY_FLAG_IV_INO_* flags is needed.
+	 */
+	u64 (*get_extent_ino_equivalent)(struct fscrypt_info **info_ptr);
+
+	/*
 	 * Return an array of pointers to the block devices to which the
 	 * filesystem may write encrypted file contents, NULL if the filesystem
 	 * only has a single such block device, or an ERR_PTR() on error.
