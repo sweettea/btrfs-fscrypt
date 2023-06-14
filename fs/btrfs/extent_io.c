@@ -787,6 +787,14 @@ static bool btrfs_bio_is_contig(struct btrfs_bio_ctrl *bio_ctrl,
 	struct bio_vec *bvec = bio_last_bvec_all(bio);
 	const sector_t sector = disk_bytenr >> SECTOR_SHIFT;
 
+	if (IS_ENABLED(CONFIG_FS_ENCRYPTION)) {
+		struct inode *inode = page->mapping->host;
+		u64 lblk = pg_offset / inode->i_sb->s_blocksize;
+
+		if (!fscrypt_mergeable_bio(bio, inode, lblk))
+			return false;
+	}
+
 	if (bio_ctrl->compress_type != BTRFS_COMPRESS_NONE) {
 		/*
 		 * For compression, all IO should have its logical bytenr set
@@ -825,6 +833,9 @@ static void alloc_new_bio(struct btrfs_inode *inode,
 	bbio->file_offset = file_offset;
 	bio_ctrl->bbio = bbio;
 	bio_ctrl->len_to_oe_boundary = U32_MAX;
+	fscrypt_set_bio_crypt_ctx(&bbio->bio, &inode->vfs_inode,
+				  file_offset >> fs_info->sectorsize_bits,
+				  GFP_NOIO);
 
 	/* Limit data write bios to the ordered boundary. */
 	if (bio_ctrl->wbc) {
