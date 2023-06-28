@@ -284,6 +284,15 @@ struct fscrypt_common_info {
 struct fscrypt_info {
 	struct fscrypt_common_info info;
 
+	/* Credential struct from the thread which created this info. This is
+	 * only used in v1 session keyrings with extent encryption; it allows
+	 * the thread creating extents for an inode to join the session
+	 * keyring temporarily, since otherwise the thread is usually part of
+	 * kernel writeback and therefore unrelated to the thread with the
+	 * right session key.
+	 */
+	struct cred *ci_session_creds;
+
 	/*
 	 * This inode's hash key for filenames.  This is a 128-bit SipHash-2-4
 	 * key.  This is only set for directories that use a keyed dirhash over

@@ -619,6 +619,9 @@ static void put_crypt_inode_info(struct fscrypt_info *ci)
 	free_prepared_key(&ci->info);
 	remove_info_from_mk_decrypted_list(&ci->info);
 
+	if (ci->ci_session_creds)
+		abort_creds(ci->ci_session_creds);
+
 	memzero_explicit(ci, sizeof(*ci));
 	kmem_cache_free(fscrypt_inode_info_cachep, ci);
 }
@@ -726,6 +729,9 @@ fscrypt_setup_encryption_info(struct inode *inode,
 					CI_INODE, &mk);
 	if (res)
 		goto out;
+
+	if (!mk)
+		crypt_inode_info->ci_session_creds = prepare_creds();
 
 	/*
 	 * Derive a secret dirhash key for directories that need it. It
@@ -979,6 +985,7 @@ fscrypt_setup_extent_info(struct inode *inode,
 	struct fscrypt_extent_info *crypt_extent_info;
 	struct fscrypt_common_info *crypt_info;
 	struct fscrypt_master_key *mk = NULL;
+	const struct cred *creds = NULL;
 	int res;
 
 	crypt_extent_info = kmem_cache_zalloc(fscrypt_extent_info_cachep,
@@ -987,8 +994,20 @@ fscrypt_setup_extent_info(struct inode *inode,
 		return -ENOMEM;
 	crypt_info = &crypt_extent_info->info;
 
+	if (inode->i_crypt_info->ci_session_creds) {
+		/*
+		 * The inode this is being created for is using a session key,
+		 * so we have to join this thread to that session temporarily
+		 * in order to be able to find the right key...
+		 */
+		creds = override_creds(inode->i_crypt_info->ci_session_creds);
+	}
+
 	res = fscrypt_setup_common_info(crypt_info, inode, policy, nonce,
 					CI_EXTENT, &mk);
+	if (creds)
+		revert_creds(creds);
+
 	if (res)
 		goto out;
 
