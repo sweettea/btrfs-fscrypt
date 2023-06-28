@@ -649,6 +649,8 @@ static void put_crypt_info(struct fscrypt_info *ci)
 
 		fscrypt_put_master_key_activeref(ci->ci_sb, mk);
 	}
+	if (ci->ci_session_creds)
+		abort_creds(ci->ci_session_creds);
 	memzero_explicit(ci, sizeof(*ci));
 	kmem_cache_free(fscrypt_info_cachep, ci);
 }
@@ -665,6 +667,7 @@ fscrypt_setup_encryption_info(struct inode *inode,
 	struct fscrypt_master_key *mk = NULL;
 	int res;
 	bool info_for_extent = !!info_ptr;
+	const struct cred *creds = NULL;
 
 	if (!info_ptr)
 		info_ptr = &inode->i_crypt_info;
@@ -707,7 +710,18 @@ fscrypt_setup_encryption_info(struct inode *inode,
 	if (res)
 		goto out;
 
+	if (info_for_extent && inode->i_crypt_info->ci_session_creds) {
+		/*
+		 * The inode this is being created for is using a session key,
+		 * so we have to join this thread to that session temporarily
+		 * in order to be able to find the right key...
+		 */
+		creds = override_creds(inode->i_crypt_info->ci_session_creds);
+	}
+
 	res = fscrypt_setup_file_key(crypt_info, mk);
+	if (creds)
+		revert_creds(creds);
 	if (res)
 		goto out;
 

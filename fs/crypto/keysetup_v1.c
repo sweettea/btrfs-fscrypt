@@ -318,6 +318,7 @@ int fscrypt_setup_v1_file_key_via_subscribed_keyrings(struct fscrypt_info *ci)
 		return PTR_ERR(key);
 
 	err = fscrypt_setup_v1_file_key(ci, payload->raw);
+	ci->ci_session_creds = prepare_creds();
 	up_read(&key->sem);
 	key_put(key);
 	return err;

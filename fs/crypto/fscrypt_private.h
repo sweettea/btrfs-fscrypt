@@ -231,6 +231,14 @@ struct fscrypt_info {
 	 */
 	bool ci_inlinecrypt;
 #endif
+	/* Credential struct from the thread which created this info. This is
+	 * only used in v1 session keyrings with extent encryption; it allows
+	 * the thread creating extents for an inode to join the session
+	 * keyring temporarily, since otherwise the thread is usually part of
+	 * kernel writeback and therefore unrelated to the thread with the
+	 * right session key.
+	 */
+	struct cred *ci_session_creds;
 
 	/*
 	 * Encryption mode used for this inode.  It corresponds to either the
