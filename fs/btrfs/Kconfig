@@ -80,7 +80,7 @@ config BTRFS_FS_RUN_SANITY_TESTS
 
 config BTRFS_DEBUG
 	bool "Btrfs debugging support"
-	depends on BTRFS_FS
+	depends on BTRFS_FS && FS_ENCRYPTION_INLINE_CRYPT && BLK_INLINE_ENCRYPTION_FALLBACK
 	help
 	  Enable run-time debugging support for the btrfs filesystem. This may
 	  enable additional and expensive checks with negative impact on
