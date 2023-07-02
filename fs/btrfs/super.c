@@ -238,7 +238,7 @@ static const struct btrfs_sb_encodings *
 btrfs_sb_read_encoding(const struct btrfs_fs_info *fs_info)
 {
 	struct btrfs_super_block *disk_super = fs_info->super_copy;
-	u16 encoding = le16_to_cpu(disk_super->encoding);
+	u16 encoding = btrfs_super_encoding(disk_super);
 
 	if (encoding > BTRFS_ENC_MAX)
 		return NULL;
@@ -1117,7 +1117,7 @@ static int btrfs_encoding_init(struct btrfs_fs_info *fs_info)
 	struct unicode_map *encoding;
 	struct btrfs_super_block *disk_super = fs_info->super_copy;
 	struct super_block *sb = fs_info->sb;
-	u16 encoding_flags = le16_to_cpu(disk_super->encoding_flags);
+	u16 encoding_flags = btrfs_super_encoding_flags(disk_super);
 
 	if (!btrfs_fs_incompat(fs_info, CASEFOLD) || sb->s_encoding)
 		return 0;
