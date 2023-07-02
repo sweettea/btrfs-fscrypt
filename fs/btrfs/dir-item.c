@@ -11,6 +11,19 @@
 #include "dir-item.h"
 
 /*
+ * set up the appropriate key, given the fscrypt_name and dir's inode number.
+ */
+struct btrfs_key key_from_name(u64 dir, const struct fscrypt_name *name)
+{
+	struct btrfs_key key;
+
+	key.objectid = dir;
+	key.type = BTRFS_DIR_ITEM_KEY;
+	key.offset = btrfs_name_hash(name->name, name->len);
+	return key;
+}
+
+/*
  * insert a name into a directory, doing overflow properly if there is a hash
  * collision.  data_size indicates how big the item inserted should be.  On
  * success a struct btrfs_dir_item pointer is returned, otherwise it is
@@ -117,13 +130,9 @@ int btrfs_insert_dir_item(struct btrfs_trans_handle *trans,
 	struct btrfs_dir_item *dir_item;
 	struct extent_buffer *leaf;
 	unsigned long name_ptr;
-	struct btrfs_key key;
+	struct btrfs_key key = key_from_name(btrfs_ino(dir), name);
 	struct btrfs_disk_key disk_key;
 	u32 data_size;
-
-	key.objectid = btrfs_ino(dir);
-	key.type = BTRFS_DIR_ITEM_KEY;
-	key.offset = btrfs_name_hash(name->name, name->len);
 
 	path = btrfs_alloc_path();
 	if (!path)
@@ -215,12 +224,8 @@ struct btrfs_dir_item *btrfs_lookup_dir_item(struct btrfs_trans_handle *trans,
 					     const struct fscrypt_str *name,
 					     int mod)
 {
-	struct btrfs_key key;
+	struct btrfs_key key = key_from_name(dir, name);
 	struct btrfs_dir_item *di;
-
-	key.objectid = dir;
-	key.type = BTRFS_DIR_ITEM_KEY;
-	key.offset = btrfs_name_hash(name->name, name->len);
 
 	di = btrfs_lookup_match_dir(trans, root, path, &key, name->name,
 				    name->len, mod);
@@ -234,7 +239,7 @@ int btrfs_check_dir_item_collision(struct btrfs_root *root, u64 dir,
 				   const struct fscrypt_str *name)
 {
 	int ret;
-	struct btrfs_key key;
+	struct btrfs_key key = key_from_name(dir, name);
 	struct btrfs_dir_item *di;
 	int data_size;
 	struct extent_buffer *leaf;
@@ -244,10 +249,6 @@ int btrfs_check_dir_item_collision(struct btrfs_root *root, u64 dir,
 	path = btrfs_alloc_path();
 	if (!path)
 		return -ENOMEM;
-
-	key.objectid = dir;
-	key.type = BTRFS_DIR_ITEM_KEY;
-	key.offset = btrfs_name_hash(name->name, name->len);
 
 	di = btrfs_lookup_match_dir(NULL, root, path, &key, name->name,
 				    name->len, 0);
