@@ -13,7 +13,7 @@
 /*
  * set up the appropriate key, given the fscrypt_name and dir's inode number.
  */
-struct btrfs_key key_from_name(u64 dir, const struct fscrypt_name *name)
+static struct btrfs_key key_from_name(u64 dir, const struct fscrypt_str *name)
 {
 	struct btrfs_key key;
 
@@ -21,6 +21,15 @@ struct btrfs_key key_from_name(u64 dir, const struct fscrypt_name *name)
 	key.type = BTRFS_DIR_ITEM_KEY;
 	key.offset = btrfs_name_hash(name->name, name->len);
 	return key;
+}
+
+static bool name_matches(struct extent_buffer *leaf,
+			 struct btrfs_dir_item *dir_item,
+			 const char *name, int name_len)
+{
+	unsigned long name_ptr = (unsigned long)(dir_item +1);
+	return (btrfs_dir_name_len(leaf, dir_item) == name_len) &&
+		(memcmp_extent_buffer(leaf, name, name_ptr, name_len) == 0);
 }
 
 /*
@@ -384,7 +393,6 @@ struct btrfs_dir_item *btrfs_match_dir_item_name(struct btrfs_fs_info *fs_info,
 						 const char *name, int name_len)
 {
 	struct btrfs_dir_item *dir_item;
-	unsigned long name_ptr;
 	u32 total_len;
 	u32 cur = 0;
 	u32 this_len;
@@ -398,10 +406,8 @@ struct btrfs_dir_item *btrfs_match_dir_item_name(struct btrfs_fs_info *fs_info,
 		this_len = sizeof(*dir_item) +
 			btrfs_dir_name_len(leaf, dir_item) +
 			btrfs_dir_data_len(leaf, dir_item);
-		name_ptr = (unsigned long)(dir_item + 1);
 
-		if (btrfs_dir_name_len(leaf, dir_item) == name_len &&
-		    memcmp_extent_buffer(leaf, name, name_ptr, name_len) == 0)
+		if (name_matches(leaf, dir_item, name, name_len))
 			return dir_item;
 
 		cur += this_len;
