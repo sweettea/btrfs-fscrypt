@@ -720,8 +720,12 @@ struct btrfs_super_block {
 	__u8 sys_chunk_array[BTRFS_SYSTEM_CHUNK_ARRAY_SIZE];
 	struct btrfs_root_backup super_roots[BTRFS_NUM_BACKUP_ROOTS];
 
+	/* Used in case casefolding is enabled */
+	__le16 encoding;
+	__le16 encoding_flags;
+
 	/* Padded to 4096 bytes */
-	__u8 padding[565];
+	__u8 padding[561];
 } __attribute__ ((__packed__));
 
 #define BTRFS_FREE_SPACE_EXTENT	1
@@ -777,6 +781,9 @@ struct btrfs_stripe_extent {
 #define BTRFS_SUPER_FLAG_CHANGING_FSID	(1ULL << 35)
 #define BTRFS_SUPER_FLAG_CHANGING_FSID_V2 (1ULL << 36)
 
+/* Superblock encoding field values */
+#define BTRFS_ENC_UTF8_12_1 1
+#define BTRFS_ENC_MAX 1
 
 /*
  * items in the extent btree are used to record the objectid of the

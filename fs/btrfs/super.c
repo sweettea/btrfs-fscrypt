@@ -25,6 +25,7 @@
 #include <linux/slab.h>
 #include <linux/ratelimit.h>
 #include <linux/crc32c.h>
+#include <linux/unicode.h>
 #include <linux/btrfs.h>
 #include <linux/security.h>
 #include "messages.h"
@@ -224,6 +225,28 @@ static const match_table_t rescue_tokens = {
 	{Opt_rescue_all, "all"},
 	{Opt_err, NULL},
 };
+
+#if IS_ENABLED(CONFIG_UNICODE)
+static const struct btrfs_sb_encodings {
+	char *name;
+	unsigned int version;
+} btrfs_sb_encoding_map[] = {
+	[BTRFS_ENC_UTF8_12_1] = {"utf8", UNICODE_AGE(12, 1, 0)},
+};
+
+static const struct btrfs_sb_encodings *
+btrfs_sb_read_encoding(const struct btrfs_fs_info *fs_info)
+{
+	struct btrfs_super_block *disk_super = fs_info->super_copy;
+	u16 encoding = le16_to_cpu(disk_super->encoding);
+
+	if (encoding > BTRFS_ENC_MAX)
+		return NULL;
+	if (!btrfs_sb_encoding_map[encoding].name)
+		return NULL;
+	return &btrfs_sb_encoding_map[encoding];
+}
+#endif
 
 static bool check_ro_option(struct btrfs_fs_info *fs_info, unsigned long opt,
 			    const char *opt_name)
@@ -1087,6 +1110,56 @@ static int get_default_subvol_objectid(struct btrfs_fs_info *fs_info, u64 *objec
 	return 0;
 }
 
+#if IS_ENABLED(CONFIG_UNICODE)
+static int btrfs_encoding_init(struct btrfs_fs_info *fs_info)
+{
+	const struct btrfs_sb_encodings *encoding_info;
+	struct unicode_map *encoding;
+	struct btrfs_super_block *disk_super = fs_info->super_copy;
+	struct super_block *sb = fs_info->sb;
+	u16 encoding_flags = le16_to_cpu(disk_super->encoding_flags);
+
+	if (!btrfs_fs_incompat(fs_info, CASEFOLD) || sb->s_encoding)
+		return 0;
+
+	encoding_info = btrfs_sb_read_encoding(fs_info);
+	if (!encoding_info) {
+		btrfs_err(fs_info,
+			  "encoding requested by superblock is unknown");
+		return -EINVAL;
+	}
+
+	encoding = utf8_load(encoding_info->version);
+	if (IS_ERR(encoding)) {
+		btrfs_err(fs_info,
+			"can't mount with superblock charset: %s-%u.%u.%u "
+			"not supported by the kernel. flags: 0x%x.",
+			encoding_info->name,
+			unicode_major(encoding_info->version),
+			unicode_minor(encoding_info->version),
+			unicode_rev(encoding_info->version),
+			encoding_flags);
+		return -EINVAL;
+	}
+	btrfs_info(fs_info,"Using encoding defined by superblock: "
+		"%s-%u.%u.%u with flags 0x%hx", encoding_info->name,
+		unicode_major(encoding_info->version),
+		unicode_minor(encoding_info->version),
+		unicode_rev(encoding_info->version),
+		encoding_flags);
+
+	sb->s_encoding = encoding;
+	sb->s_encoding_flags = encoding_flags;
+
+	return 0;
+}
+#else
+static inline int btrfs_encoding_init(struct fs_info *fs_info)
+{
+	return 0;
+}
+#endif
+
 static int btrfs_fill_super(struct super_block *sb,
 			    struct btrfs_fs_devices *fs_devices,
 			    void *data)
@@ -1121,6 +1194,12 @@ static int btrfs_fill_super(struct super_block *sb,
 	if (err) {
 		btrfs_err(fs_info, "open_ctree failed");
 		return err;
+	}
+
+	err = btrfs_encoding_init(fs_info);
+	if (err) {
+		btrfs_handle_fs_error(fs_info, err, NULL);
+		goto fail_close;
 	}
 
 	inode = btrfs_iget(sb, BTRFS_FIRST_FREE_OBJECTID, fs_info->fs_root);

@@ -17,6 +17,7 @@
 #include <linux/error-injection.h>
 #include <linux/crc32c.h>
 #include <linux/sched/mm.h>
+#include <linux/unicode.h>
 #include <asm/unaligned.h>
 #include <crypto/hash.h>
 #include "ctree.h"
@@ -4388,6 +4389,10 @@ void __cold close_ctree(struct btrfs_fs_info *fs_info)
 
 	/* We shouldn't have any transaction open at this point */
 	warn_about_uncommitted_trans(fs_info);
+
+#if IS_ENABLED(CONFIG_UNICODE)
+	utf8_unload(fs_info->sb->s_encoding);
+#endif
 
 	clear_bit(BTRFS_FS_OPEN, &fs_info->flags);
 	free_root_pointers(fs_info, true);
