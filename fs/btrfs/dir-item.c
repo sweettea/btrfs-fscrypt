@@ -162,6 +162,9 @@ int btrfs_insert_dir_item(struct btrfs_trans_handle *trans,
 	if (IS_ENCRYPTED(&dir->vfs_inode))
 		type |= BTRFS_FT_ENCRYPTED;
 
+	if (IS_CASEFOLDED(&dir->vfs_inode))
+		type |= BTRFS_FT_CASEFOLD;
+
 	leaf = path->nodes[0];
 	btrfs_set_dir_item_key(leaf, dir_item, &disk_key);
 	btrfs_set_dir_flags(leaf, dir_item, type);

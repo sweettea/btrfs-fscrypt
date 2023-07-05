@@ -403,6 +403,8 @@ enum btrfs_csum_type {
 #define BTRFS_FT_MAX		9
 /* Directory contains encrypted data */
 #define BTRFS_FT_ENCRYPTED	0x80
+/* Directory is casefolded */
+#define BTRFS_FT_CASEFOLD	0x40
 
 static inline __u8 btrfs_dir_flags_to_ftype(__u8 flags)
 {
