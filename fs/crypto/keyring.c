@@ -938,8 +938,7 @@ static int check_for_busy_inodes(struct super_block *sb,
 static int try_to_lock_encrypted_files(struct super_block *sb,
 				       struct fscrypt_master_key *mk)
 {
-	int err1;
-	int err2;
+	int err;
 
 	/*
 	 * An inode can't be evicted while it is dirty or has dirty pages.
@@ -951,7 +950,7 @@ static int try_to_lock_encrypted_files(struct super_block *sb,
 	 * already call sync_filesystem() via sys_syncfs() or sys_sync().
 	 */
 	down_read(&sb->s_umount);
-	err1 = sync_filesystem(sb);
+	err = sync_filesystem(sb);
 	up_read(&sb->s_umount);
 	/* If a sync error occurs, still try to evict as much as possible. */
 
@@ -963,16 +962,7 @@ static int try_to_lock_encrypted_files(struct super_block *sb,
 	 */
 	evict_dentries_for_decrypted_inodes(mk);
 
-	/*
-	 * evict_dentries_for_decrypted_inodes() already iput() each inode in
-	 * the list; any inodes for which that dropped the last reference will
-	 * have been evicted due to fscrypt_drop_inode() detecting the key
-	 * removal and telling the VFS to evict the inode.  So to finish, we
-	 * just need to check whether any inodes couldn't be evicted.
-	 */
-	err2 = check_for_busy_inodes(sb, mk);
-
-	return err1 ?: err2;
+	return err;
 }
 
 /*
@@ -1064,8 +1054,17 @@ static int do_remove_key(struct file *filp, void __user *_uarg, bool all_users)
 	up_write(&mk->mk_sem);
 
 	if (inodes_remain) {
+		int err2;
 		/* Some inodes still reference this key; try to evict them. */
 		err = try_to_lock_encrypted_files(sb, mk);
+		/* We already tried to iput() each inode referencing this key
+		 * which would cause the inode to be evicted if that was the
+		 * last reference (since fscrypt_drop_inode() would see the
+		 * key removal). So the only remaining inodes referencing this
+		 * key are still busy and couldn't be evicted; check for them.
+		 */
+		err2 = check_for_busy_inodes(sb, mk);
+		err = err ?: err2;
 		if (err == -EBUSY) {
 			status_flags |=
 				FSCRYPT_KEY_REMOVAL_STATUS_FLAG_FILES_BUSY;
