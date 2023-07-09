@@ -576,6 +576,15 @@ static int find_and_lock_master_key(const struct fscrypt_info *ci,
 		goto out_release_key;
 	}
 
+	if (!ci->ci_info_ptr && mk->mk_soft_deleted) {
+		/*
+		 * This is an inode info, and only extent infos can use keys
+		 * that have been soft deleted
+		 */
+		err = -ENOKEY;
+		goto out_release_key;
+	}
+
 	*mk_ret = mk;
 	return 0;
 
@@ -606,6 +615,8 @@ static void put_crypt_info(struct fscrypt_info *ci)
 
 	mk = ci->ci_master_key;
 	if (mk) {
+		bool any_inodes;
+
 		/*
 		 * Remove this inode from the list of inodes that were unlocked
 		 * with the master key.  In addition, if we're removing the last
@@ -614,7 +625,28 @@ static void put_crypt_info(struct fscrypt_info *ci)
 		 */
 		spin_lock(&mk->mk_decrypted_inodes_lock);
 		list_del(&ci->ci_master_key_link);
+		any_inodes = list_empty(&mk->mk_decrypted_inodes);
 		spin_unlock(&mk->mk_decrypted_inodes_lock);
+		if (any_inodes) {
+			bool soft_deleted;
+			/* It might be that someone tried to remove this key,
+			 * but there were still inodes open that could need new
+			 * extents, which needed to be able to access the key
+			 * secret. But now this was the last reference. So we
+			 * can delete the key secret now. (We don't need to
+			 * check for new inodes on the decrypted_inode list
+			 * because once ->mk_soft_deleted is set, no new inode
+			 * can join the list.
+			 */
+			down_write(&mk->mk_sem);
+			soft_deleted = mk->mk_soft_deleted;
+			if (soft_deleted)
+				fscrypt_wipe_master_key_secret(&mk->mk_secret);
+			up_write(&mk->mk_sem);
+			if (soft_deleted)
+				fscrypt_put_master_key_activeref(ci->ci_sb, mk);
+		}
+
 		fscrypt_put_master_key_activeref(ci->ci_sb, mk);
 	}
 	memzero_explicit(ci, sizeof(*ci));
@@ -967,6 +999,7 @@ int fscrypt_drop_inode(struct inode *inode)
 	 * then the thread removing the key will either evict the inode itself
 	 * or will correctly detect that it wasn't evicted due to the race.
 	 */
-	return !is_master_key_secret_present(&ci->ci_master_key->mk_secret);
+	return READ_ONCE(ci->ci_master_key->mk_soft_deleted) ||
+		!is_master_key_secret_present(&ci->ci_master_key->mk_secret);
 }
 EXPORT_SYMBOL_GPL(fscrypt_drop_inode);

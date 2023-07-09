@@ -333,6 +333,21 @@ static inline bool fscrypt_uses_extent_encryption(const struct inode *inode)
 }
 
 /**
+ * fscrypt_fs_uses_extent_encryption() -- whether a filesystem uses per-extent
+ *				          encryption
+ *
+ * @sb: the superblock of the filesystem in question
+ *
+ * Return: true if the fs uses per-extent fscrypt_infos, false otherwise
+ */
+static inline bool
+fscrypt_fs_uses_extent_encryption(const struct super_block *sb)
+{
+	// No filesystems currently use per-extent infos
+	return false;
+}
+
+/**
  * fscrypt_get_info_ino() - get the ino or ino equivalent for an info
  *
  * @ci: the fscrypt_info in question
@@ -556,11 +571,14 @@ struct fscrypt_master_key {
 
 	/*
 	 * The secret key material.  After FS_IOC_REMOVE_ENCRYPTION_KEY is
-	 * executed, this is wiped and no new inodes can be unlocked with this
-	 * key; however, there may still be inodes in ->mk_decrypted_inodes
-	 * which could not be evicted.  As long as some inodes still remain,
-	 * FS_IOC_REMOVE_ENCRYPTION_KEY can be retried, or
-	 * FS_IOC_ADD_ENCRYPTION_KEY can add the secret again.
+	 * executed, no new inodes can be unlocked with this key; however,
+	 * there may still be inodes in ->mk_decrypted_inodes which could not
+	 * be evicted. For inode-based encryption, the secret is wiped; for
+	 * extent-based encryption, the secret is preserved while inodes still
+	 * reference it, as they may need to create new extents using the
+	 * secret to service IO; @soft_deleted is set to true then. As long as
+	 * some inodes still remain, FS_IOC_REMOVE_ENCRYPTION_KEY can be
+	 * retried, or FS_IOC_ADD_ENCRYPTION_KEY can add the secret again.
 	 *
 	 * While ->mk_secret is present, one ref in ->mk_active_refs is held.
 	 *
@@ -600,6 +618,13 @@ struct fscrypt_master_key {
 	spinlock_t		mk_decrypted_inodes_lock;
 
 	/*
+	 * Whether the key is unavailable to new inodes, but still available
+	 * to new extents within decrypted inodes. Protected by ->mk_sem, except
+	 * for race-okay access in fscrypt_drop_inode().
+	 */
+	bool			mk_soft_deleted;
+
+	/*
 	 * Per-mode encryption keys for the various types of encryption policies
 	 * that use them.  Allocated and derived on-demand.
 	 */
@@ -625,6 +650,8 @@ is_master_key_secret_present(const struct fscrypt_master_key_secret *secret)
 	 */
 	return READ_ONCE(secret->size) != 0;
 }
+
+void fscrypt_wipe_master_key_secret(struct fscrypt_master_key_secret *secret);
 
 static inline const char *master_key_spec_type(
 				const struct fscrypt_key_specifier *spec)
