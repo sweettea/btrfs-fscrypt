@@ -38,7 +38,7 @@ struct fscrypt_keyring {
 	struct hlist_head key_hashtable[128];
 };
 
-static void wipe_master_key_secret(struct fscrypt_master_key_secret *secret)
+void fscrypt_wipe_master_key_secret(struct fscrypt_master_key_secret *secret)
 {
 	fscrypt_destroy_hkdf(&secret->hkdf);
 	memzero_explicit(secret, sizeof(*secret));
@@ -239,8 +239,9 @@ void fscrypt_destroy_keyring(struct super_block *sb)
 			 */
 			WARN_ON_ONCE(refcount_read(&mk->mk_active_refs) != 1);
 			WARN_ON_ONCE(refcount_read(&mk->mk_struct_refs) != 1);
-			WARN_ON_ONCE(!is_master_key_secret_present(&mk->mk_secret));
-			wipe_master_key_secret(&mk->mk_secret);
+			WARN_ON_ONCE(!mk->mk_soft_deleted &&
+				     !is_master_key_secret_present(&mk->mk_secret));
+			fscrypt_wipe_master_key_secret(&mk->mk_secret);
 			fscrypt_put_master_key_activeref(sb, mk);
 		}
 	}
@@ -484,6 +485,8 @@ static int add_existing_master_key(struct fscrypt_master_key *mk,
 			return KEY_DEAD;
 		move_master_key_secret(&mk->mk_secret, secret);
 	}
+
+	mk->mk_soft_deleted = false;
 
 	return 0;
 }
@@ -738,7 +741,7 @@ int fscrypt_ioctl_add_key(struct file *filp, void __user *_uarg)
 		goto out_wipe_secret;
 	err = 0;
 out_wipe_secret:
-	wipe_master_key_secret(&secret);
+	fscrypt_wipe_master_key_secret(&secret);
 	return err;
 }
 EXPORT_SYMBOL_GPL(fscrypt_ioctl_add_key);
@@ -770,7 +773,7 @@ int fscrypt_get_test_dummy_key_identifier(
 				  NULL, 0, key_identifier,
 				  FSCRYPT_KEY_IDENTIFIER_SIZE);
 out:
-	wipe_master_key_secret(&secret);
+	fscrypt_wipe_master_key_secret(&secret);
 	return err;
 }
 
@@ -794,7 +797,7 @@ int fscrypt_add_test_dummy_key(struct super_block *sb,
 
 	fscrypt_get_test_dummy_secret(&secret);
 	err = add_master_key(sb, &secret, key_spec);
-	wipe_master_key_secret(&secret);
+	fscrypt_wipe_master_key_secret(&secret);
 	return err;
 }
 
@@ -1017,6 +1020,12 @@ static int do_remove_key(struct file *filp, void __user *_uarg, bool all_users)
 	mk = fscrypt_find_master_key(sb, &arg.key_spec);
 	if (!mk)
 		return -ENOKEY;
+
+	if (fscrypt_fs_uses_extent_encryption(sb)) {
+		/* Keep going even if this has an error. */
+		try_to_lock_encrypted_files(sb, mk);
+	}
+
 	down_write(&mk->mk_sem);
 
 	/* If relevant, remove current user's (or all users) claim to the key */
@@ -1043,13 +1052,23 @@ static int do_remove_key(struct file *filp, void __user *_uarg, bool all_users)
 		}
 	}
 
-	/* No user claims remaining.  Go ahead and wipe the secret. */
+	/* No user claims remaining. */
 	err = -ENOKEY;
-	if (is_master_key_secret_present(&mk->mk_secret)) {
-		wipe_master_key_secret(&mk->mk_secret);
+	if (fscrypt_fs_uses_extent_encryption(sb) && refcount_read(&mk->mk_active_refs) > 1) {
+		mk->mk_soft_deleted = true;
+		err = 0;
+	} else if (is_master_key_secret_present(&mk->mk_secret)) {
+		fscrypt_wipe_master_key_secret(&mk->mk_secret);
 		fscrypt_put_master_key_activeref(sb, mk);
 		err = 0;
+	} else if (mk->mk_soft_deleted) {
+		/*
+		 * Was soft deleted, but all inodes have stopped using it, and
+		 * the secret was wiped by the last one.
+		 */
+		err = 0;
 	}
+
 	inodes_remain = refcount_read(&mk->mk_active_refs) > 0;
 	up_write(&mk->mk_sem);
 
@@ -1149,7 +1168,7 @@ int fscrypt_ioctl_get_key_status(struct file *filp, void __user *uarg)
 	}
 	down_read(&mk->mk_sem);
 
-	if (!is_master_key_secret_present(&mk->mk_secret)) {
+	if (mk->mk_soft_deleted || !is_master_key_secret_present(&mk->mk_secret)) {
 		arg.status = refcount_read(&mk->mk_active_refs) > 0 ?
 			FSCRYPT_KEY_STATUS_INCOMPLETELY_REMOVED :
 			FSCRYPT_KEY_STATUS_ABSENT /* raced with full removal */;

@@ -570,6 +570,12 @@ static int find_and_lock_master_key(const struct fscrypt_common_info *cci,
 		goto out_release_key;
 	}
 
+	if (cci->ci_type != CI_EXTENT && mk->mk_soft_deleted) {
+		/* Only extent infos can use keys that have been soft deleted */
+		err = -ENOKEY;
+		goto out_release_key;
+	}
+
 	*mk_ret = mk;
 	return 0;
 
@@ -598,6 +604,8 @@ static void remove_info_from_mk_decrypted_list(struct fscrypt_common_info *cci)
 {
 	struct fscrypt_master_key *mk = cci->ci_master_key;
 	if (mk) {
+		bool any_inodes;
+
 		/*
 		 * Remove this inode from the list of inodes that were unlocked
 		 * with the master key.  In addition, if we're removing the last
@@ -606,7 +614,28 @@ static void remove_info_from_mk_decrypted_list(struct fscrypt_common_info *cci)
 		 */
 		spin_lock(&mk->mk_decrypted_infos_lock);
 		list_del(&cci->ci_master_key_link);
+		any_inodes = list_empty(&mk->mk_decrypted_infos);
 		spin_unlock(&mk->mk_decrypted_infos_lock);
+		if (any_inodes) {
+			bool soft_deleted;
+			/* It might be that someone tried to remove this key,
+			 * but there were still inodes open that could need new
+			 * extents, which needed to be able to access the key
+			 * secret. But now this was the last reference. So we
+			 * can delete the key secret now. (We don't need to
+			 * check for new inodes on the decrypted_inode list
+			 * because once ->mk_soft_deleted is set, no new inode
+			 * can join the list.
+			 */
+			down_write(&mk->mk_sem);
+			soft_deleted = mk->mk_soft_deleted;
+			if (soft_deleted)
+				fscrypt_wipe_master_key_secret(&mk->mk_secret);
+			up_write(&mk->mk_sem);
+			if (soft_deleted)
+				fscrypt_put_master_key_activeref(cci->ci_inode->i_sb, mk);
+		}
+
 		fscrypt_put_master_key_activeref(cci->ci_inode->i_sb, mk);
 	}
 }
@@ -933,6 +962,7 @@ EXPORT_SYMBOL(fscrypt_free_inode);
 int fscrypt_drop_inode(struct inode *inode)
 {
 	const struct fscrypt_info *ci = fscrypt_get_info(inode);
+	const struct fscrypt_common_info *cci = &ci->info;
 
 	/*
 	 * If ci is NULL, then the inode doesn't have an encryption key set up
@@ -940,7 +970,7 @@ int fscrypt_drop_inode(struct inode *inode)
 	 * was provided via the legacy mechanism of the process-subscribed
 	 * keyrings, so we don't know whether it's been removed or not.
 	 */
-	if (!ci || !ci->info.ci_master_key)
+	if (!ci || !cci->ci_master_key)
 		return 0;
 
 	/*
@@ -960,7 +990,8 @@ int fscrypt_drop_inode(struct inode *inode)
 	 * then the thread removing the key will either evict the inode itself
 	 * or will correctly detect that it wasn't evicted due to the race.
 	 */
-	return !is_master_key_secret_present(&ci->info.ci_master_key->mk_secret);
+	return cci->ci_master_key->mk_soft_deleted ||
+		!is_master_key_secret_present(&cci->ci_master_key->mk_secret);
 }
 EXPORT_SYMBOL_GPL(fscrypt_drop_inode);
 
