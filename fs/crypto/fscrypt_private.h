@@ -205,6 +205,16 @@ struct fscrypt_prepared_key {
 	struct crypto_skcipher *tfm;
 #ifdef CONFIG_FS_ENCRYPTION_INLINE_CRYPT
 	struct blk_crypto_key *blk_key;
+
+	/*
+	 * The list of devices that have this block key.
+	 */
+	struct block_device **devices;
+
+	/*
+	 * The number of devices in @ci_devices.
+	 */
+	size_t device_count;
 #endif
 	enum fscrypt_prepared_key_type type;
 };
@@ -470,8 +480,7 @@ int fscrypt_prepare_inline_crypt_key(struct fscrypt_prepared_key *prep_key,
 				     const u8 *raw_key,
 				     const struct fscrypt_info *ci);
 
-void fscrypt_destroy_inline_crypt_key(struct super_block *sb,
-				      struct fscrypt_prepared_key *prep_key);
+void fscrypt_destroy_inline_crypt_key(struct fscrypt_prepared_key *prep_key);
 
 /*
  * Check whether the crypto transform or blk-crypto key has been allocated in

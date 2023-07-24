@@ -185,11 +185,14 @@ int fscrypt_prepare_inline_crypt_key(struct fscrypt_prepared_key *prep_key,
 		if (err)
 			break;
 	}
-	kfree(devs);
+
 	if (err) {
 		fscrypt_err(inode, "error %d starting to use blk-crypto", err);
 		goto fail;
 	}
+
+	prep_key->devices = devs;
+	prep_key->device_count = num_devs;
 
 	/*
 	 * Pairs with the smp_load_acquire() in fscrypt_is_key_prepared().
@@ -205,24 +208,19 @@ fail:
 	return err;
 }
 
-void fscrypt_destroy_inline_crypt_key(struct super_block *sb,
-				      struct fscrypt_prepared_key *prep_key)
+void fscrypt_destroy_inline_crypt_key(struct fscrypt_prepared_key *prep_key)
 {
 	struct blk_crypto_key *blk_key = prep_key->blk_key;
-	struct block_device **devs;
-	unsigned int num_devs;
 	unsigned int i;
 
 	if (!blk_key)
 		return;
 
 	/* Evict the key from all the filesystem's block devices. */
-	devs = fscrypt_get_devices(sb, &num_devs);
-	if (!IS_ERR(devs)) {
-		for (i = 0; i < num_devs; i++)
-			blk_crypto_evict_key(devs[i], blk_key);
-		kfree(devs);
-	}
+	for (i = 0; i < prep_key->device_count; i++)
+		blk_crypto_evict_key(prep_key->devices[i], blk_key);
+
+	kfree(prep_key->devices);
 	kfree_sensitive(blk_key);
 }
 
