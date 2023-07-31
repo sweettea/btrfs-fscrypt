@@ -216,6 +216,12 @@ struct fscrypt_prepared_key {
 	 */
 	size_t device_count;
 #endif
+	/*
+	 * For destroying asynchronously.
+	 */
+	struct work_struct work;
+	/* A pointer to free after destroy. */
+	void *ptr_to_free;
 	enum fscrypt_prepared_key_type type;
 };
 
@@ -526,8 +532,7 @@ fscrypt_prepare_inline_crypt_key(struct fscrypt_prepared_key *prep_key,
 }
 
 static inline void
-fscrypt_destroy_inline_crypt_key(struct super_block *sb,
-				 struct fscrypt_prepared_key *prep_key)
+fscrypt_destroy_inline_crypt_key(struct fscrypt_prepared_key *prep_key)
 {
 }
 
@@ -748,7 +753,8 @@ int fscrypt_prepare_key(struct fscrypt_prepared_key *prep_key,
 			const u8 *raw_key, const struct fscrypt_info *ci);
 
 void fscrypt_destroy_prepared_key(struct super_block *sb,
-				  struct fscrypt_prepared_key *prep_key);
+				  struct fscrypt_prepared_key *prep_key,
+				  void *ptr_to_free);
 
 int fscrypt_set_per_file_enc_key(struct fscrypt_info *ci, const u8 *raw_key);
 

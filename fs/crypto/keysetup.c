@@ -190,13 +190,36 @@ int fscrypt_prepare_key(struct fscrypt_prepared_key *prep_key,
 	return 0;
 }
 
-/* Destroy a crypto transform object and/or blk-crypto key. */
-void fscrypt_destroy_prepared_key(struct super_block *sb,
-				  struct fscrypt_prepared_key *prep_key)
+static void __destroy_key(struct fscrypt_prepared_key *prep_key)
 {
+	void *ptr_to_free = prep_key->ptr_to_free;
+
 	crypto_free_skcipher(prep_key->tfm);
 	fscrypt_destroy_inline_crypt_key(prep_key);
 	memzero_explicit(prep_key, sizeof(*prep_key));
+	if (ptr_to_free)
+		kfree_sensitive(ptr_to_free);
+}
+
+static void __destroy_key_work(struct work_struct *work)
+{
+	struct fscrypt_prepared_key *prep_key =
+		container_of(work, struct fscrypt_prepared_key, work);
+
+	__destroy_key(prep_key);
+}
+
+/* Destroy a crypto transform object and/or blk-crypto key. */
+void fscrypt_destroy_prepared_key(struct super_block *sb,
+				  struct fscrypt_prepared_key *prep_key,
+				  void *ptr_to_free)
+{
+	prep_key->ptr_to_free = ptr_to_free;
+	if (fscrypt_fs_uses_extent_encryption(sb)) {
+		INIT_WORK(&prep_key->work, __destroy_key_work);
+		queue_work(system_unbound_wq, &prep_key->work);
+	} else
+		__destroy_key(prep_key);
 }
 
 /* Given a per-file encryption key, set up the file's crypto transform object */
@@ -608,8 +631,8 @@ static void put_crypt_info(struct fscrypt_info *ci)
 			fscrypt_put_direct_key(ci->ci_enc_key);
 		if (type == FSCRYPT_KEY_PER_INFO) {
 			fscrypt_destroy_prepared_key(ci->ci_sb,
+						     ci->ci_enc_key,
 						     ci->ci_enc_key);
-			kfree_sensitive(ci->ci_enc_key);
 		}
 	}
 
