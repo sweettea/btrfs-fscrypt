@@ -155,8 +155,7 @@ struct fscrypt_direct_key {
 static void free_direct_key(struct fscrypt_direct_key *dk)
 {
 	if (dk) {
-		fscrypt_destroy_prepared_key(dk->dk_sb, &dk->dk_key);
-		kfree_sensitive(dk);
+		fscrypt_destroy_prepared_key(dk->dk_sb, &dk->dk_key, dk);
 	}
 }
 
