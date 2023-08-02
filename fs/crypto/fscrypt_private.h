@@ -307,6 +307,11 @@ struct fscrypt_info {
  */
 struct fscrypt_extent_info {
 	struct fscrypt_common_info info;
+
+	/* Reference count. Normally 1, unless a extent info is shared by
+	 * several virtual extents.
+	 */
+	refcount_t refs;
 };
 
 typedef enum {
