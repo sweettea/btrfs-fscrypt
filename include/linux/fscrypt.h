@@ -370,6 +370,8 @@ void fscrypt_free_extent_info(struct fscrypt_info **info_ptr);
 int fscrypt_load_extent_info(struct inode *inode, void *buf, size_t len,
 			     struct fscrypt_info **info_ptr);
 
+void fscrypt_get_extent_info_ref(struct fscrypt_info *info);
+
 /* fname.c */
 int fscrypt_fname_encrypt(const struct inode *inode, const struct qstr *iname,
 			  u8 *out, unsigned int olen);

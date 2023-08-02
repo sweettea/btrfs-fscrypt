@@ -287,6 +287,11 @@ struct fscrypt_info {
 
 	/* Hashed inode number.  Only set for IV_INO_LBLK_32 */
 	u32 ci_hashed_ino;
+
+	/* Reference count. Normally 1, unless a extent info is shared by
+	 * several virtual extents.
+	 */
+	refcount_t refs;
 };
 
 typedef enum {

@@ -598,7 +598,7 @@ static void put_crypt_info(struct fscrypt_info *ci)
 {
 	struct fscrypt_master_key *mk;
 
-	if (!ci)
+	if (!ci || !refcount_dec_and_test(&ci->refs))
 		return;
 
 	if (ci->ci_enc_key) {
@@ -686,6 +686,7 @@ fscrypt_setup_encryption_info(struct inode *inode,
 	crypt_info->ci_inode = inode;
 	crypt_info->ci_sb = inode->i_sb;
 	crypt_info->ci_policy = *policy;
+	refcount_set(&crypt_info->refs, 1);
 	memcpy(crypt_info->ci_nonce, nonce, FSCRYPT_FILE_NONCE_SIZE);
 
 	mode = select_encryption_mode(&crypt_info->ci_policy, inode);
@@ -1045,6 +1046,21 @@ int fscrypt_load_extent_info(struct inode *inode, void *buf, size_t len,
 	return res;
 }
 EXPORT_SYMBOL_GPL(fscrypt_load_extent_info);
+
+/**
+ * fscrypt_get_extent_info_ref() - mark a second extent using the same info
+ * @info: the info to be used by another extent
+ *
+ * Sometimes, an existing extent must be split into multiple extents in memory.
+ * In such a case, this function allows multiple extents to use the same extent
+ * info without allocating or taking any lock, which is necessary in certain IO
+ * paths.
+ */
+void fscrypt_get_extent_info_ref(struct fscrypt_info *info)
+{
+	if (info)
+		refcount_inc(&info->refs);
+}
 
 /**
  * fscrypt_put_encryption_info() - free most of an inode's fscrypt data
