@@ -1309,6 +1309,13 @@ void btrfs_extent_item_to_extent_map(struct btrfs_inode *inode,
 
 		ctxsize = btrfs_file_extent_ctxsize_from_item(leaf, path);
 		ASSERT(ctxsize == btrfs_file_extent_encryption_ctxsize(leaf, fi));
+
+		if (ctxsize) {
+			unsigned long ptr = (unsigned long)fi->encryption_context;
+			int res = btrfs_fscrypt_load_extent_info(inode, leaf, ptr,
+								 ctxsize, &em->fscrypt_info);
+			ASSERT(res == 0);
+		}
 	} else if (type == BTRFS_FILE_EXTENT_INLINE) {
 		em->block_start = EXTENT_MAP_INLINE;
 		em->start = extent_start;
