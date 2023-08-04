@@ -75,6 +75,65 @@ bool btrfs_fscrypt_match_name(struct fscrypt_name *fname,
 	return !memcmp(digest, nokey_name->sha256, sizeof(digest));
 }
 
+int btrfs_fscrypt_fill_extent_context(struct btrfs_inode *inode,
+				      struct fscrypt_extent_info *info,
+				      u8 *context_buffer, size_t *context_len)
+{
+	struct btrfs_fs_info *fs_info = inode->root->fs_info;
+	int ret;
+
+	if (!IS_ENCRYPTED(&inode->vfs_inode))
+		return 0;
+
+
+	ret = fscrypt_set_extent_context(info, context_buffer + sizeof(u32),
+					 FSCRYPT_SET_CONTEXT_MAX_SIZE);
+	if (ret < 0) {
+		btrfs_err(fs_info, "fscrypt context could not be saved");
+		return ret;
+	}
+
+	/* the return value, if nonnegative, is the fscrypt context size */
+	ret += sizeof(u32);
+
+	put_unaligned_le32(ret, context_buffer);
+
+	*context_len = ret;
+	return 0;
+}
+
+int btrfs_fscrypt_load_extent_info(struct btrfs_inode *inode,
+				  struct extent_buffer *leaf,
+				  unsigned long ptr,
+				  u8 ctxsize,
+				  struct fscrypt_extent_info **info_ptr)
+{
+	struct btrfs_fs_info *fs_info = inode->root->fs_info;
+	u8 context[BTRFS_FSCRYPT_EXTENT_CONTEXT_MAX_SIZE];
+	int res;
+	unsigned int nofs_flags;
+	u32 len;
+
+	read_extent_buffer(leaf, context, ptr, ctxsize);
+
+	nofs_flags = memalloc_nofs_save();
+	res = fscrypt_load_extent_info(&inode->vfs_inode,
+				       context + sizeof(u32),
+				       ctxsize - sizeof(u32), info_ptr);
+	memalloc_nofs_restore(nofs_flags);
+
+	if (res)
+		btrfs_err(fs_info, "Unable to load fscrypt info: %d", res);
+
+	len = get_unaligned_le32(context);
+	if (len != ctxsize) {
+		res = -EINVAL;
+		btrfs_err(fs_info, "fscrypt info size mismatches");
+	}
+
+	return res;
+}
+
 static int btrfs_fscrypt_get_context(struct inode *inode, void *ctx, size_t len)
 {
 	struct btrfs_key key = {
@@ -138,11 +197,14 @@ static int btrfs_fscrypt_set_context(struct inode *inode, const void *ctx,
 
 	if (!trans)
 		trans = btrfs_start_transaction(BTRFS_I(inode)->root, 1);
-	if (IS_ERR(trans))
+	if (IS_ERR(trans)) {
+		btrfs_free_path(path);
 		return PTR_ERR(trans);
+	}
 
 	ret = btrfs_search_slot(trans, BTRFS_I(inode)->root, &key, path, 0, 1);
 	if (ret < 0) {
+		btrfs_free_path(path);
 		btrfs_abort_transaction(trans, ret);
 		return ret;
 	}
@@ -151,12 +213,13 @@ static int btrfs_fscrypt_set_context(struct inode *inode, const void *ctx,
 		btrfs_release_path(path);
 		ret = btrfs_insert_empty_item(trans, BTRFS_I(inode)->root, path, &key, len);
 		if (ret) {
+			btrfs_free_path(path);
 			btrfs_abort_transaction(trans, ret);
 			return ret;
 		}
 	}
-
 	btrfs_fscrypt_update_context(path, ctx, len);
+	btrfs_free_path(path);
 
 	if (fs_data)
 		return ret;
@@ -166,6 +229,7 @@ static int btrfs_fscrypt_set_context(struct inode *inode, const void *ctx,
 	inode_inc_iversion(inode);
 	inode->i_ctime = current_time(inode);
 	ret = btrfs_update_inode(trans, BTRFS_I(inode)->root, BTRFS_I(inode));
+
 	if (!ret) {
 		btrfs_end_transaction(trans);
 		return ret;
@@ -179,6 +243,45 @@ static int btrfs_fscrypt_set_context(struct inode *inode, const void *ctx,
 static bool btrfs_fscrypt_empty_dir(struct inode *inode)
 {
 	return inode->i_size == BTRFS_EMPTY_DIR_SIZE;
+}
+
+int btrfs_fscrypt_get_extent_info(const struct inode *inode,
+				  u64 lblk_num,
+				  struct fscrypt_extent_info **info_ptr,
+				  u64 *extent_offset,
+				  u64 *extent_length)
+{
+	u64 offset = lblk_num << inode->i_blkbits;
+	struct extent_map *em;
+
+	/* Since IO must be in progress on this extent, this must succeed */
+	em = btrfs_get_extent(BTRFS_I(inode), NULL, 0, offset, PAGE_SIZE);
+	if (!em) {
+		btrfs_err(BTRFS_I(inode)->root->fs_info,
+			  "extent context requested for block %llu of inode %lu without an extent",
+			  lblk_num, inode->i_ino);
+		return -EINVAL;
+	}
+
+	if (em->block_start == EXTENT_MAP_HOLE) {
+		btrfs_info(BTRFS_I(inode)->root->fs_info,
+			   "extent context requested for block %llu of inode %lu without an extent",
+			   lblk_num, inode->i_ino);
+		free_extent_map(em);
+		return -ENOENT;
+	}
+
+	*info_ptr = em->fscrypt_info;
+
+	if (extent_offset)
+		*extent_offset
+			 = (offset - em->orig_start) >> inode->i_blkbits;
+
+	if (extent_length)
+		*extent_length = em->len >> inode->i_blkbits;
+
+	free_extent_map(em);
+	return 0;
 }
 
 static struct block_device **btrfs_fscrypt_get_devices(struct super_block *sb,
@@ -232,6 +335,7 @@ const struct fscrypt_operations btrfs_fscrypt_ops = {
 	.get_context = btrfs_fscrypt_get_context,
 	.set_context = btrfs_fscrypt_set_context,
 	.empty_dir = btrfs_fscrypt_empty_dir,
+	.get_extent_info = btrfs_fscrypt_get_extent_info,
 	.get_devices = btrfs_fscrypt_get_devices,
 	.key_prefix = "btrfs:"
 };

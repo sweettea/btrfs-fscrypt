@@ -2878,17 +2878,41 @@ static int insert_reserved_file_extent(struct btrfs_trans_handle *trans,
 	u64 num_bytes = btrfs_stack_file_extent_num_bytes(stack_fi);
 	u64 ram_bytes = btrfs_stack_file_extent_ram_bytes(stack_fi);
 	struct btrfs_drop_extents_args drop_args = { 0 };
-	size_t fscrypt_context_size =
-		btrfs_stack_file_extent_encryption(stack_fi) ?
-			FSCRYPT_SET_CONTEXT_MAX_SIZE : 0;
+	size_t fscrypt_context_size = 0;
+	u8 context[BTRFS_FSCRYPT_EXTENT_CONTEXT_MAX_SIZE];
+	u8 encryption = 0;
+
 	int ret;
 
 	path = btrfs_alloc_path();
 	if (!path)
 		return -ENOMEM;
 
+	if (IS_ENCRYPTED(&inode->vfs_inode)) {
+		struct fscrypt_extent_info *fscrypt_info;
+		u64 lblk_num = file_pos >> root->fs_info->sectorsize_bits;
+
+		ret = btrfs_fscrypt_get_extent_info(&inode->vfs_inode,
+						    lblk_num, &fscrypt_info,
+						    NULL, NULL);
+		if (ret) {
+			btrfs_err(root->fs_info, "No fscrypt context found");
+			goto out;
+		}
+
+		ret = btrfs_fscrypt_fill_extent_context(inode, fscrypt_info,
+							context,
+							&fscrypt_context_size);
+		if (ret)
+			goto out;
+		encryption = BTRFS_ENCRYPTION_FSCRYPT;
+
+	}
+
+	btrfs_set_stack_file_extent_encryption(stack_fi, encryption);
+
 	/*
-	 * we may be replacing one extent in the tree with another.
+	 * We may be replacing one extent in the tree with another.
 	 * The new extent is pinned in the extent map, and we don't want
 	 * to drop it from the cache until it is completely in the btree.
 	 *
@@ -2920,6 +2944,11 @@ static int insert_reserved_file_extent(struct btrfs_trans_handle *trans,
 	write_extent_buffer(leaf, stack_fi,
 			btrfs_item_ptr_offset(leaf, path->slots[0]),
 			sizeof(struct btrfs_file_extent_item));
+
+	write_extent_buffer(leaf, context,
+			    btrfs_item_ptr_offset(leaf, path->slots[0]) +
+			    sizeof(struct btrfs_file_extent_item),
+			    fscrypt_context_size);
 
 	btrfs_mark_buffer_dirty(leaf);
 	btrfs_release_path(path);

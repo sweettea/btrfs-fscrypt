@@ -9,6 +9,9 @@
 
 #include "fs.h"
 
+#define BTRFS_FSCRYPT_EXTENT_CONTEXT_MAX_SIZE \
+	(sizeof(u32) + FSCRYPT_SET_CONTEXT_MAX_SIZE)
+
 static inline u32
 btrfs_file_extent_encryption_ctxsize(const struct extent_buffer *eb,
 				     struct btrfs_file_extent_item *e)
@@ -38,6 +41,15 @@ bool btrfs_fscrypt_match_name(struct fscrypt_name *fname,
 			      struct extent_buffer *leaf,
 			      unsigned long de_name, u32 de_name_len);
 
+int btrfs_fscrypt_fill_extent_context(struct btrfs_inode *inode,
+				      struct fscrypt_extent_info *info,
+				      u8 *context_buffer, size_t *context_len);
+
+int btrfs_fscrypt_load_extent_info(struct btrfs_inode *inode,
+				   struct extent_buffer *leaf,
+				   unsigned long ptr, u8 ctxsize,
+				   struct fscrypt_extent_info **info_ptr);
+
 #else
 static inline int btrfs_fscrypt_get_disk_name(struct extent_buffer *leaf,
 					      struct btrfs_dir_item *di,
@@ -56,8 +68,31 @@ static inline bool btrfs_fscrypt_match_name(struct fscrypt_name *fname,
 	return !memcmp_extent_buffer(leaf, fname->disk_name.name, de_name,
 				     de_name_len);
 }
+
+static inline int btrfs_fscrypt_fill_extent_context(struct btrfs_inode *inode,
+						    struct fscrypt_extent_info *info,
+						    u8 *context_buffer,
+						    size_t *context_len)
+{
+	return -EINVAL;
+}
+
+static inline int btrfs_fscrypt_load_extent_info(struct btrfs_inode *inode,
+						 struct extent_buffer *leaf,
+						 unsigned long ptr,
+						 u8 ctxsize,
+						 struct fscrypt_extent_info **info_ptr)
+{
+	return -EINVAL;
+}
+
 #endif /* CONFIG_FS_ENCRYPTION */
 
+int btrfs_fscrypt_get_extent_info(const struct inode *inode,
+				  u64 lblk_num,
+				  struct fscrypt_extent_info **info_ptr,
+				  u64 *extent_offset,
+				  u64 *extent_length);
 void btrfs_fscrypt_copy_fscrypt_info(struct btrfs_inode *inode,
 				     struct fscrypt_extent_info *from,
 				     struct fscrypt_extent_info **to_ptr);

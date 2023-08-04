@@ -22,6 +22,7 @@
 #include "zoned.h"
 #include "inode-item.h"
 #include "fs.h"
+#include "fscrypt.h"
 #include "accessors.h"
 #include "extent-tree.h"
 #include "root-tree.h"
@@ -4637,6 +4638,14 @@ static int log_one_extent(struct btrfs_trans_handle *trans,
 	size_t fscrypt_context_size = 0;
 	u8 encryption = IS_ENCRYPTED(&inode->vfs_inode) ?
 				BTRFS_ENCRYPTION_FSCRYPT : 0;
+	u8 context[BTRFS_FSCRYPT_EXTENT_CONTEXT_MAX_SIZE];
+
+	ret = btrfs_fscrypt_fill_extent_context(inode, em->fscrypt_info,
+						context, &fscrypt_context_size);
+	if (ret)
+		return ret;
+
+	btrfs_set_stack_file_extent_encryption(&fi, encryption);
 
 	btrfs_set_stack_file_extent_generation(&fi, trans->transid);
 	if (test_bit(EXTENT_FLAG_PREALLOC, &em->flags))
@@ -4658,7 +4667,6 @@ static int log_one_extent(struct btrfs_trans_handle *trans,
 	btrfs_set_stack_file_extent_num_bytes(&fi, em->len);
 	btrfs_set_stack_file_extent_ram_bytes(&fi, em->ram_bytes);
 	btrfs_set_stack_file_extent_compression(&fi, em->compress_type);
-	btrfs_set_stack_file_extent_encryption(&fi, encryption);
 
 	ret = log_extent_csums(trans, inode, log, em, ctx);
 	if (ret)
@@ -4698,6 +4706,10 @@ static int log_one_extent(struct btrfs_trans_handle *trans,
 	write_extent_buffer(leaf, &fi,
 			    btrfs_item_ptr_offset(leaf, path->slots[0]),
 			    sizeof(fi));
+	write_extent_buffer(leaf, context,
+			    btrfs_item_ptr_offset(leaf, path->slots[0]) +
+			    sizeof(fi), fscrypt_context_size);
+
 	btrfs_mark_buffer_dirty(leaf);
 
 	btrfs_release_path(path);
