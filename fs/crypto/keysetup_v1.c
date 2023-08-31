@@ -9,7 +9,7 @@
  * This file implements compatibility functions for the original encryption
  * policy version ("v1"), including:
  *
- * - Deriving per-file encryption keys using the AES-128-ECB based KDF
+ * - Deriving per-info encryption keys using the AES-128-ECB based KDF
  *   (rather than the new method of using HKDF-SHA512)
  *
  * - Retrieving fscrypt master keys from process-subscribed keyrings
@@ -181,7 +181,8 @@ void fscrypt_put_direct_key(struct fscrypt_prepared_key *prep_key)
  */
 static struct fscrypt_direct_key *
 find_or_insert_direct_key(struct fscrypt_direct_key *to_insert,
-			  const u8 *raw_key, const struct fscrypt_info *ci)
+			  const u8 *raw_key,
+			  const struct fscrypt_common_info *cci)
 {
 	unsigned long hash_key;
 	struct fscrypt_direct_key *dk;
@@ -193,19 +194,19 @@ find_or_insert_direct_key(struct fscrypt_direct_key *to_insert,
 	 */
 
 	BUILD_BUG_ON(sizeof(hash_key) > FSCRYPT_KEY_DESCRIPTOR_SIZE);
-	memcpy(&hash_key, ci->ci_policy.v1.master_key_descriptor,
+	memcpy(&hash_key, cci->ci_policy.v1.master_key_descriptor,
 	       sizeof(hash_key));
 
 	spin_lock(&fscrypt_direct_keys_lock);
 	hash_for_each_possible(fscrypt_direct_keys, dk, dk_node, hash_key) {
-		if (memcmp(ci->ci_policy.v1.master_key_descriptor,
+		if (memcmp(cci->ci_policy.v1.master_key_descriptor,
 			   dk->dk_descriptor, FSCRYPT_KEY_DESCRIPTOR_SIZE) != 0)
 			continue;
-		if (ci->ci_mode != dk->dk_mode)
+		if (cci->ci_mode != dk->dk_mode)
 			continue;
-		if (!fscrypt_is_key_prepared(&dk->dk_key, ci))
+		if (!fscrypt_is_key_prepared(&dk->dk_key, cci))
 			continue;
-		if (crypto_memneq(raw_key, dk->dk_raw, ci->ci_mode->keysize))
+		if (crypto_memneq(raw_key, dk->dk_raw, cci->ci_mode->keysize))
 			continue;
 		/* using existing tfm with same (descriptor, mode, raw_key) */
 		refcount_inc(&dk->dk_refcount);
@@ -221,13 +222,13 @@ find_or_insert_direct_key(struct fscrypt_direct_key *to_insert,
 
 /* Prepare to encrypt directly using the master key in the given mode */
 static struct fscrypt_direct_key *
-fscrypt_get_direct_key(const struct fscrypt_info *ci, const u8 *raw_key)
+fscrypt_get_direct_key(const struct fscrypt_common_info *cci, const u8 *raw_key)
 {
 	struct fscrypt_direct_key *dk;
 	int err;
 
 	/* Is there already a tfm for this key? */
-	dk = find_or_insert_direct_key(NULL, raw_key, ci);
+	dk = find_or_insert_direct_key(NULL, raw_key, cci);
 	if (dk)
 		return dk;
 
@@ -235,18 +236,18 @@ fscrypt_get_direct_key(const struct fscrypt_info *ci, const u8 *raw_key)
 	dk = kzalloc(sizeof(*dk), GFP_KERNEL);
 	if (!dk)
 		return ERR_PTR(-ENOMEM);
-	dk->dk_sb = ci->ci_inode->i_sb;
+	dk->dk_sb = cci->ci_inode->i_sb;
 	refcount_set(&dk->dk_refcount, 1);
-	dk->dk_mode = ci->ci_mode;
+	dk->dk_mode = cci->ci_mode;
 	dk->dk_key.type = FSCRYPT_KEY_DIRECT_V1;
-	err = fscrypt_prepare_key(&dk->dk_key, raw_key, ci);
+	err = fscrypt_prepare_key(&dk->dk_key, raw_key, cci);
 	if (err)
 		goto err_free_dk;
-	memcpy(dk->dk_descriptor, ci->ci_policy.v1.master_key_descriptor,
+	memcpy(dk->dk_descriptor, cci->ci_policy.v1.master_key_descriptor,
 	       FSCRYPT_KEY_DESCRIPTOR_SIZE);
-	memcpy(dk->dk_raw, raw_key, ci->ci_mode->keysize);
+	memcpy(dk->dk_raw, raw_key, cci->ci_mode->keysize);
 
-	return find_or_insert_direct_key(dk, raw_key, ci);
+	return find_or_insert_direct_key(dk, raw_key, cci);
 
 err_free_dk:
 	free_direct_key(dk);
@@ -254,20 +255,20 @@ err_free_dk:
 }
 
 /* v1 policy, DIRECT_KEY: use the master key directly */
-static int setup_v1_file_key_direct(struct fscrypt_info *ci,
+static int setup_v1_info_key_direct(struct fscrypt_common_info *cci,
 				    const u8 *raw_master_key)
 {
 	struct fscrypt_direct_key *dk;
 
-	dk = fscrypt_get_direct_key(ci, raw_master_key);
+	dk = fscrypt_get_direct_key(cci, raw_master_key);
 	if (IS_ERR(dk))
 		return PTR_ERR(dk);
-	ci->ci_enc_key = &dk->dk_key;
+	cci->ci_enc_key = &dk->dk_key;
 	return 0;
 }
 
-/* v1 policy, !DIRECT_KEY: derive the file's encryption key */
-static int setup_v1_file_key_derived(struct fscrypt_info *ci,
+/* v1 policy, !DIRECT_KEY: derive the info's encryption key */
+static int setup_v1_info_key_derived(struct fscrypt_common_info *cci,
 				     const u8 *raw_master_key)
 {
 	u8 *derived_key;
@@ -277,47 +278,48 @@ static int setup_v1_file_key_derived(struct fscrypt_info *ci,
 	 * This cannot be a stack buffer because it will be passed to the
 	 * scatterlist crypto API during derive_key_aes().
 	 */
-	derived_key = kmalloc(ci->ci_mode->keysize, GFP_KERNEL);
+	derived_key = kmalloc(cci->ci_mode->keysize, GFP_KERNEL);
 	if (!derived_key)
 		return -ENOMEM;
 
-	err = derive_key_aes(raw_master_key, ci->ci_nonce,
-			     derived_key, ci->ci_mode->keysize);
+	err = derive_key_aes(raw_master_key, cci->ci_nonce,
+			     derived_key, cci->ci_mode->keysize);
 	if (err)
 		goto out;
 
-	err = fscrypt_set_per_file_enc_key(ci, derived_key);
+	err = fscrypt_set_per_info_enc_key(cci, derived_key);
 out:
 	kfree_sensitive(derived_key);
 	return err;
 }
 
-int fscrypt_setup_v1_file_key(struct fscrypt_info *ci, const u8 *raw_master_key)
+int fscrypt_setup_v1_info_key(struct fscrypt_common_info *cci,
+			      const u8 *raw_master_key)
 {
-	if (ci->ci_policy.v1.flags & FSCRYPT_POLICY_FLAG_DIRECT_KEY)
-		return setup_v1_file_key_direct(ci, raw_master_key);
+	if (cci->ci_policy.v1.flags & FSCRYPT_POLICY_FLAG_DIRECT_KEY)
+		return setup_v1_info_key_direct(cci, raw_master_key);
 	else
-		return setup_v1_file_key_derived(ci, raw_master_key);
+		return setup_v1_info_key_derived(cci, raw_master_key);
 }
 
-int fscrypt_setup_v1_file_key_via_subscribed_keyrings(struct fscrypt_info *ci)
+int fscrypt_setup_v1_info_key_via_subscribed_keyrings(struct fscrypt_common_info *cci)
 {
 	struct key *key;
 	const struct fscrypt_key *payload;
 	int err;
 
 	key = find_and_lock_process_key(FSCRYPT_KEY_DESC_PREFIX,
-					ci->ci_policy.v1.master_key_descriptor,
-					ci->ci_mode->keysize, &payload);
-	if (key == ERR_PTR(-ENOKEY) && ci->ci_inode->i_sb->s_cop->key_prefix) {
-		key = find_and_lock_process_key(ci->ci_inode->i_sb->s_cop->key_prefix,
-						ci->ci_policy.v1.master_key_descriptor,
-						ci->ci_mode->keysize, &payload);
+					cci->ci_policy.v1.master_key_descriptor,
+					cci->ci_mode->keysize, &payload);
+	if (key == ERR_PTR(-ENOKEY) && cci->ci_inode->i_sb->s_cop->key_prefix) {
+		key = find_and_lock_process_key(cci->ci_inode->i_sb->s_cop->key_prefix,
+						cci->ci_policy.v1.master_key_descriptor,
+						cci->ci_mode->keysize, &payload);
 	}
 	if (IS_ERR(key))
 		return PTR_ERR(key);
 
-	err = fscrypt_setup_v1_file_key(ci, payload->raw);
+	err = fscrypt_setup_v1_info_key(cci, payload->raw);
 	up_read(&key->sem);
 	key_put(key);
 	return err;

@@ -412,7 +412,7 @@ static int fscrypt_get_policy(struct inode *inode, union fscrypt_policy *policy)
 	ci = fscrypt_get_info(inode);
 	if (ci) {
 		/* key available, use the cached policy */
-		*policy = ci->ci_policy;
+		*policy = ci->info.ci_policy;
 		return 0;
 	}
 
@@ -698,7 +698,7 @@ const union fscrypt_policy *fscrypt_policy_to_inherit(struct inode *dir)
 		err = fscrypt_require_key(dir);
 		if (err)
 			return ERR_PTR(err);
-		return &dir->i_crypt_info->ci_policy;
+		return &dir->i_crypt_info->info.ci_policy;
 	}
 
 	return fscrypt_get_dummy_policy(dir->i_sb);
@@ -726,7 +726,7 @@ int fscrypt_context_for_new_inode(void *ctx, struct inode *inode)
 	if (WARN_ON_ONCE(!ci))
 		return -ENOKEY;
 
-	return fscrypt_new_context(ctx, &ci->ci_policy, ci->ci_nonce);
+	return fscrypt_new_context(ctx, &ci->info.ci_policy, ci->info.ci_nonce);
 }
 EXPORT_SYMBOL_GPL(fscrypt_context_for_new_inode);
 
@@ -743,6 +743,7 @@ EXPORT_SYMBOL_GPL(fscrypt_context_for_new_inode);
 int fscrypt_set_context(struct inode *inode, void *fs_data)
 {
 	struct fscrypt_info *ci = inode->i_crypt_info;
+	struct fscrypt_common_info *cci = &ci->info;
 	union fscrypt_context ctx;
 	int ctxsize;
 
@@ -754,9 +755,9 @@ int fscrypt_set_context(struct inode *inode, void *fs_data)
 	 * This may be the first time the inode number is available, so do any
 	 * delayed key setup that requires the inode number.
 	 */
-	if (ci->ci_policy.version == FSCRYPT_POLICY_V2 &&
-	    (ci->ci_policy.v2.flags & FSCRYPT_POLICY_FLAG_IV_INO_LBLK_32))
-		fscrypt_hash_inode_number(ci, ci->ci_master_key);
+	if (cci->ci_policy.version == FSCRYPT_POLICY_V2 &&
+	    (cci->ci_policy.v2.flags & FSCRYPT_POLICY_FLAG_IV_INO_LBLK_32))
+		fscrypt_hash_inode_number(cci, cci->ci_master_key);
 
 	return inode->i_sb->s_cop->set_context(inode, &ctx, ctxsize, fs_data);
 }

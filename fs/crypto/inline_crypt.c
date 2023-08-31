@@ -39,10 +39,10 @@ static struct block_device **fscrypt_get_devices(struct super_block *sb,
 	return devs;
 }
 
-static unsigned int fscrypt_get_dun_bytes(const struct fscrypt_info *ci)
+static unsigned int fscrypt_get_dun_bytes(const struct fscrypt_common_info *cci)
 {
-	struct super_block *sb = ci->ci_inode->i_sb;
-	unsigned int flags = fscrypt_policy_flags(&ci->ci_policy);
+	struct super_block *sb = cci->ci_inode->i_sb;
+	unsigned int flags = fscrypt_policy_flags(&cci->ci_policy);
 	int ino_bits = 64, lblk_bits = 64;
 
 	if (flags & FSCRYPT_POLICY_FLAG_DIRECT_KEY)
@@ -90,9 +90,9 @@ static void fscrypt_log_blk_crypto_impl(struct fscrypt_mode *mode,
 }
 
 /* Enable inline encryption for this file if supported. */
-int fscrypt_select_encryption_impl(struct fscrypt_info *ci)
+int fscrypt_select_encryption_impl(struct fscrypt_common_info *cci)
 {
-	const struct inode *inode = ci->ci_inode;
+	const struct inode *inode = cci->ci_inode;
 	struct super_block *sb = inode->i_sb;
 	struct blk_crypto_config crypto_cfg;
 	struct block_device **devs;
@@ -104,7 +104,7 @@ int fscrypt_select_encryption_impl(struct fscrypt_info *ci)
 		return 0;
 
 	/* The crypto mode must have a blk-crypto counterpart */
-	if (ci->ci_mode->blk_crypto_mode == BLK_ENCRYPTION_MODE_INVALID)
+	if (cci->ci_mode->blk_crypto_mode == BLK_ENCRYPTION_MODE_INVALID)
 		return 0;
 
 	/* The filesystem must be mounted with -o inlinecrypt */
@@ -119,7 +119,7 @@ int fscrypt_select_encryption_impl(struct fscrypt_info *ci)
 	 * doesn't work with IV_INO_LBLK_32. For now, simply exclude
 	 * IV_INO_LBLK_32 with blocksize != PAGE_SIZE from inline encryption.
 	 */
-	if ((fscrypt_policy_flags(&ci->ci_policy) &
+	if ((fscrypt_policy_flags(&cci->ci_policy) &
 	     FSCRYPT_POLICY_FLAG_IV_INO_LBLK_32) &&
 	    sb->s_blocksize != PAGE_SIZE)
 		return 0;
@@ -128,9 +128,9 @@ int fscrypt_select_encryption_impl(struct fscrypt_info *ci)
 	 * On all the filesystem's block devices, blk-crypto must support the
 	 * crypto configuration that the file would use.
 	 */
-	crypto_cfg.crypto_mode = ci->ci_mode->blk_crypto_mode;
+	crypto_cfg.crypto_mode = cci->ci_mode->blk_crypto_mode;
 	crypto_cfg.data_unit_size = sb->s_blocksize;
-	crypto_cfg.dun_bytes = fscrypt_get_dun_bytes(ci);
+	crypto_cfg.dun_bytes = fscrypt_get_dun_bytes(cci);
 
 	devs = fscrypt_get_devices(sb, &num_devs);
 	if (IS_ERR(devs))
@@ -141,9 +141,9 @@ int fscrypt_select_encryption_impl(struct fscrypt_info *ci)
 			goto out_free_devs;
 	}
 
-	fscrypt_log_blk_crypto_impl(ci->ci_mode, devs, num_devs, &crypto_cfg);
+	fscrypt_log_blk_crypto_impl(cci->ci_mode, devs, num_devs, &crypto_cfg);
 
-	ci->ci_inlinecrypt = true;
+	cci->ci_inlinecrypt = true;
 out_free_devs:
 	kfree(devs);
 
@@ -152,11 +152,11 @@ out_free_devs:
 
 int fscrypt_prepare_inline_crypt_key(struct fscrypt_prepared_key *prep_key,
 				     const u8 *raw_key,
-				     const struct fscrypt_info *ci)
+				     const struct fscrypt_common_info *cci)
 {
-	const struct inode *inode = ci->ci_inode;
+	const struct inode *inode = cci->ci_inode;
 	struct super_block *sb = inode->i_sb;
-	enum blk_crypto_mode_num crypto_mode = ci->ci_mode->blk_crypto_mode;
+	enum blk_crypto_mode_num crypto_mode = cci->ci_mode->blk_crypto_mode;
 	struct blk_crypto_key *blk_key;
 	struct block_device **devs;
 	unsigned int num_devs;
@@ -168,7 +168,7 @@ int fscrypt_prepare_inline_crypt_key(struct fscrypt_prepared_key *prep_key,
 		return -ENOMEM;
 
 	err = blk_crypto_init_key(blk_key, raw_key, crypto_mode,
-				  fscrypt_get_dun_bytes(ci), sb->s_blocksize);
+				  fscrypt_get_dun_bytes(cci), sb->s_blocksize);
 	if (err) {
 		fscrypt_err(inode, "error %d initializing blk-crypto key", err);
 		goto fail;
@@ -228,21 +228,21 @@ void fscrypt_destroy_inline_crypt_key(struct super_block *sb,
 
 bool __fscrypt_inode_uses_inline_crypto(const struct inode *inode)
 {
-	return inode->i_crypt_info->ci_inlinecrypt;
+	return inode->i_crypt_info->info.ci_inlinecrypt;
 }
 EXPORT_SYMBOL_GPL(__fscrypt_inode_uses_inline_crypto);
 
-static void fscrypt_generate_dun(const struct fscrypt_info *ci, u64 lblk_num,
+static void fscrypt_generate_dun(const struct fscrypt_common_info *cci, u64 lblk_num,
 				 u64 dun[BLK_CRYPTO_DUN_ARRAY_SIZE])
 {
 	union fscrypt_iv iv;
 	int i;
 
-	fscrypt_generate_iv(&iv, lblk_num, ci);
+	fscrypt_generate_iv(&iv, lblk_num, cci);
 
 	BUILD_BUG_ON(FSCRYPT_MAX_IV_SIZE > BLK_CRYPTO_MAX_IV_SIZE);
 	memset(dun, 0, BLK_CRYPTO_MAX_IV_SIZE);
-	for (i = 0; i < ci->ci_mode->ivsize/sizeof(dun[0]); i++)
+	for (i = 0; i < cci->ci_mode->ivsize/sizeof(dun[0]); i++)
 		dun[i] = le64_to_cpu(iv.dun[i]);
 }
 
@@ -265,16 +265,16 @@ static void fscrypt_generate_dun(const struct fscrypt_info *ci, u64 lblk_num,
 void fscrypt_set_bio_crypt_ctx(struct bio *bio, const struct inode *inode,
 			       u64 first_lblk, gfp_t gfp_mask)
 {
-	const struct fscrypt_info *ci;
+	const struct fscrypt_common_info *cci;
 	u64 dun[BLK_CRYPTO_DUN_ARRAY_SIZE];
 	u64 ci_offset = 0;
 
 	if (!fscrypt_inode_uses_inline_crypto(inode))
 		return;
-	ci = fscrypt_get_lblk_info(inode, first_lblk, &ci_offset, NULL);
+	cci = fscrypt_get_lblk_info(inode, first_lblk, &ci_offset, NULL);
 
-	fscrypt_generate_dun(ci, ci_offset, dun);
-	bio_crypt_set_ctx(bio, ci->ci_enc_key->blk_key, dun, gfp_mask);
+	fscrypt_generate_dun(cci, ci_offset, dun);
+	bio_crypt_set_ctx(bio, cci->ci_enc_key->blk_key, dun, gfp_mask);
 }
 EXPORT_SYMBOL_GPL(fscrypt_set_bio_crypt_ctx);
 
@@ -350,7 +350,7 @@ bool fscrypt_mergeable_bio(struct bio *bio, const struct inode *inode,
 {
 	const struct bio_crypt_ctx *bc = bio->bi_crypt_context;
 	u64 next_dun[BLK_CRYPTO_DUN_ARRAY_SIZE];
-	struct fscrypt_info *ci;
+	struct fscrypt_common_info *cci;
 	u64 ci_offset = 0;
 
 	if (!!bc != fscrypt_inode_uses_inline_crypto(inode))
@@ -358,16 +358,16 @@ bool fscrypt_mergeable_bio(struct bio *bio, const struct inode *inode,
 	if (!bc)
 		return true;
 
-	ci = fscrypt_get_lblk_info(inode, next_lblk, &ci_offset, NULL);
+	cci = fscrypt_get_lblk_info(inode, next_lblk, &ci_offset, NULL);
 	/*
 	 * Comparing the key pointers is good enough, as all I/O for each key
 	 * uses the same pointer.  I.e., there's currently no need to support
 	 * merging requests where the keys are the same but the pointers differ.
 	 */
-	if (bc->bc_key != ci->ci_enc_key->blk_key)
+	if (bc->bc_key != cci->ci_enc_key->blk_key)
 		return false;
 
-	fscrypt_generate_dun(ci, ci_offset, next_dun);
+	fscrypt_generate_dun(cci, ci_offset, next_dun);
 	return bio_crypt_dun_is_contiguous(bc, bio->bi_iter.bi_size, next_dun);
 }
 EXPORT_SYMBOL_GPL(fscrypt_mergeable_bio);
@@ -460,7 +460,7 @@ EXPORT_SYMBOL_GPL(fscrypt_dio_supported);
  */
 u64 fscrypt_limit_io_blocks(const struct inode *inode, u64 lblk, u64 nr_blocks)
 {
-	const struct fscrypt_info *ci;
+	const struct fscrypt_common_info *cci;
 	u32 dun;
 	u64 ci_offset = 0;
 	u64 extent_len = 0;
@@ -471,18 +471,18 @@ u64 fscrypt_limit_io_blocks(const struct inode *inode, u64 lblk, u64 nr_blocks)
 	if (nr_blocks <= 1)
 		return nr_blocks;
 
-	ci = fscrypt_get_lblk_info(inode, lblk, &ci_offset, &extent_len);
+	cci = fscrypt_get_lblk_info(inode, lblk, &ci_offset, &extent_len);
 
 	/* Spanning an extent boundary will change the DUN */
 	nr_blocks = min_t(u64, nr_blocks, extent_len);
 
-	if (!(fscrypt_policy_flags(&ci->ci_policy) &
+	if (!(fscrypt_policy_flags(&cci->ci_policy) &
 	      FSCRYPT_POLICY_FLAG_IV_INO_LBLK_32))
 		return nr_blocks;
 
 	/* With IV_INO_LBLK_32, the DUN can wrap around from U32_MAX to 0. */
 
-	dun = ci->ci_hashed_ino + ci_offset;
+	dun = cci->ci_hashed_ino + ci_offset;
 
 	return min_t(u64, nr_blocks, (u64)U32_MAX + 1 - dun);
 }

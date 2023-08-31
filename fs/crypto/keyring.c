@@ -100,10 +100,10 @@ void fscrypt_put_master_key_activeref(struct super_block *sb,
 
 	/*
 	 * ->mk_active_refs == 0 implies that ->mk_secret is not present and
-	 * that ->mk_decrypted_inodes is empty.
+	 * that ->mk_decrypted_infos is empty.
 	 */
 	WARN_ON_ONCE(is_master_key_secret_present(&mk->mk_secret));
-	WARN_ON_ONCE(!list_empty(&mk->mk_decrypted_inodes));
+	WARN_ON_ONCE(!list_empty(&mk->mk_decrypted_infos));
 
 	for (i = 0; i <= FSCRYPT_MODE_MAX; i++) {
 		fscrypt_destroy_prepared_key(
@@ -426,8 +426,8 @@ static int add_new_master_key(struct super_block *sb,
 	refcount_set(&mk->mk_struct_refs, 1);
 	mk->mk_spec = *mk_spec;
 
-	INIT_LIST_HEAD(&mk->mk_decrypted_inodes);
-	spin_lock_init(&mk->mk_decrypted_inodes_lock);
+	INIT_LIST_HEAD(&mk->mk_decrypted_infos);
+	spin_lock_init(&mk->mk_decrypted_infos_lock);
 
 	if (mk_spec->type == FSCRYPT_KEY_SPEC_TYPE_IDENTIFIER) {
 		err = allocate_master_key_users_keyring(mk);
@@ -865,16 +865,16 @@ static void shrink_dcache_inode(struct inode *inode)
 	d_prune_aliases(inode);
 }
 
-static void evict_dentries_for_decrypted_inodes(struct fscrypt_master_key *mk)
+static void evict_dentries_for_decrypted_infos(struct fscrypt_master_key *mk)
 {
-	struct fscrypt_info *ci;
+	struct fscrypt_common_info *cci;
 	struct inode *inode;
 	struct inode *toput_inode = NULL;
 
-	spin_lock(&mk->mk_decrypted_inodes_lock);
+	spin_lock(&mk->mk_decrypted_infos_lock);
 
-	list_for_each_entry(ci, &mk->mk_decrypted_inodes, ci_master_key_link) {
-		inode = ci->ci_inode;
+	list_for_each_entry(cci, &mk->mk_decrypted_infos, ci_master_key_link) {
+		inode = cci->ci_inode;
 		spin_lock(&inode->i_lock);
 		if (inode->i_state & (I_FREEING | I_WILL_FREE | I_NEW)) {
 			spin_unlock(&inode->i_lock);
@@ -882,16 +882,16 @@ static void evict_dentries_for_decrypted_inodes(struct fscrypt_master_key *mk)
 		}
 		__iget(inode);
 		spin_unlock(&inode->i_lock);
-		spin_unlock(&mk->mk_decrypted_inodes_lock);
+		spin_unlock(&mk->mk_decrypted_infos_lock);
 
 		shrink_dcache_inode(inode);
 		iput(toput_inode);
 		toput_inode = inode;
 
-		spin_lock(&mk->mk_decrypted_inodes_lock);
+		spin_lock(&mk->mk_decrypted_infos_lock);
 	}
 
-	spin_unlock(&mk->mk_decrypted_inodes_lock);
+	spin_unlock(&mk->mk_decrypted_infos_lock);
 	iput(toput_inode);
 }
 
@@ -903,25 +903,25 @@ static int check_for_busy_inodes(struct super_block *sb,
 	unsigned long ino;
 	char ino_str[50] = "";
 
-	spin_lock(&mk->mk_decrypted_inodes_lock);
+	spin_lock(&mk->mk_decrypted_infos_lock);
 
-	list_for_each(pos, &mk->mk_decrypted_inodes)
+	list_for_each(pos, &mk->mk_decrypted_infos)
 		busy_count++;
 
 	if (busy_count == 0) {
-		spin_unlock(&mk->mk_decrypted_inodes_lock);
+		spin_unlock(&mk->mk_decrypted_infos_lock);
 		return 0;
 	}
 
 	{
 		/* select an example file to show for debugging purposes */
 		struct inode *inode =
-			list_first_entry(&mk->mk_decrypted_inodes,
-					 struct fscrypt_info,
+			list_first_entry(&mk->mk_decrypted_infos,
+					 struct fscrypt_common_info,
 					 ci_master_key_link)->ci_inode;
 		ino = inode->i_ino;
 	}
-	spin_unlock(&mk->mk_decrypted_inodes_lock);
+	spin_unlock(&mk->mk_decrypted_infos_lock);
 
 	/* If the inode is currently being created, ino may still be 0. */
 	if (ino)
@@ -942,7 +942,7 @@ static int try_to_lock_encrypted_files(struct super_block *sb,
 
 	/*
 	 * An inode can't be evicted while it is dirty or has dirty pages.
-	 * Thus, we first have to clean the inodes in ->mk_decrypted_inodes.
+	 * Thus, we first have to clean the inodes in ->mk_decrypted_infos.
 	 *
 	 * Just do it the easy way: call sync_filesystem().  It's overkill, but
 	 * it works, and it's more important to minimize the amount of caches we
@@ -960,7 +960,7 @@ static int try_to_lock_encrypted_files(struct super_block *sb,
 	 * and inappropriate for use by unprivileged users.  So instead go
 	 * through the inodes' alias lists and try to evict each dentry.
 	 */
-	evict_dentries_for_decrypted_inodes(mk);
+	evict_dentries_for_decrypted_infos(mk);
 
 	return err;
 }

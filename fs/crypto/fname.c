@@ -101,7 +101,8 @@ int fscrypt_fname_encrypt(const struct inode *inode, const struct qstr *iname,
 	struct skcipher_request *req = NULL;
 	DECLARE_CRYPTO_WAIT(wait);
 	const struct fscrypt_info *ci = inode->i_crypt_info;
-	struct crypto_skcipher *tfm = ci->ci_enc_key->tfm;
+	const struct fscrypt_common_info *cci = &ci->info;
+	struct crypto_skcipher *tfm = cci->ci_enc_key->tfm;
 	union fscrypt_iv iv;
 	struct scatterlist sg;
 	int res;
@@ -116,7 +117,7 @@ int fscrypt_fname_encrypt(const struct inode *inode, const struct qstr *iname,
 	memset(out + iname->len, 0, olen - iname->len);
 
 	/* Initialize the IV */
-	fscrypt_generate_iv(&iv, 0, ci);
+	fscrypt_generate_iv(&iv, 0, cci);
 
 	/* Set up the encryption request */
 	req = skcipher_request_alloc(tfm, GFP_NOFS);
@@ -158,7 +159,8 @@ static int fname_decrypt(const struct inode *inode,
 	DECLARE_CRYPTO_WAIT(wait);
 	struct scatterlist src_sg, dst_sg;
 	const struct fscrypt_info *ci = inode->i_crypt_info;
-	struct crypto_skcipher *tfm = ci->ci_enc_key->tfm;
+	const struct fscrypt_common_info *cci = &ci->info;
+	struct crypto_skcipher *tfm = cci->ci_enc_key->tfm;
 	union fscrypt_iv iv;
 	int res;
 
@@ -171,7 +173,7 @@ static int fname_decrypt(const struct inode *inode,
 		crypto_req_done, &wait);
 
 	/* Initialize IV */
-	fscrypt_generate_iv(&iv, 0, ci);
+	fscrypt_generate_iv(&iv, 0, cci);
 
 	/* Create decryption request */
 	sg_init_one(&src_sg, iname->name, iname->len);
@@ -299,7 +301,8 @@ bool __fscrypt_fname_encrypted_size(const union fscrypt_policy *policy,
 bool fscrypt_fname_encrypted_size(const struct inode *inode, u32 orig_len,
 				  u32 max_len, u32 *encrypted_len_ret)
 {
-	return __fscrypt_fname_encrypted_size(&inode->i_crypt_info->ci_policy,
+	struct fscrypt_common_info *cci = &inode->i_crypt_info->info;
+	return __fscrypt_fname_encrypted_size(&cci->ci_policy,
 					      orig_len, max_len,
 					      encrypted_len_ret);
 }

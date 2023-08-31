@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * This contains encryption functions for per-file encryption.
+ * This contains encryption functions for fscrypt encryption.
  *
  * Copyright (C) 2015, Google, Inc.
  * Copyright (C) 2015, Motorola Mobility
@@ -39,7 +39,7 @@ static mempool_t *fscrypt_bounce_page_pool = NULL;
 static struct workqueue_struct *fscrypt_read_workqueue;
 static DEFINE_MUTEX(fscrypt_init_mutex);
 
-struct kmem_cache *fscrypt_info_cachep;
+struct kmem_cache *fscrypt_inode_info_cachep;
 
 void fscrypt_enqueue_decrypt_work(struct work_struct *work)
 {
@@ -70,7 +70,7 @@ void fscrypt_free_bounce_page(struct page *bounce_page)
 EXPORT_SYMBOL(fscrypt_free_bounce_page);
 
 /*
- * Generate the IV for the given logical block number within the given file.
+ * Generate the IV for the given logical block number within the given info.
  * For filenames encryption, lblk_num == 0.
  *
  * Keep this in sync with fscrypt_limit_io_blocks().  fscrypt_limit_io_blocks()
@@ -78,21 +78,21 @@ EXPORT_SYMBOL(fscrypt_free_bounce_page);
  * simply contain the lblk_num (e.g., IV_INO_LBLK_32).
  */
 void fscrypt_generate_iv(union fscrypt_iv *iv, u64 lblk_num,
-			 const struct fscrypt_info *ci)
+			 const struct fscrypt_common_info *cci)
 {
-	u8 flags = fscrypt_policy_flags(&ci->ci_policy);
+	u8 flags = fscrypt_policy_flags(&cci->ci_policy);
 
-	memset(iv, 0, ci->ci_mode->ivsize);
+	memset(iv, 0, cci->ci_mode->ivsize);
 
 	if (flags & FSCRYPT_POLICY_FLAG_IV_INO_LBLK_64) {
 		WARN_ON_ONCE(lblk_num > U32_MAX);
-		WARN_ON_ONCE(ci->ci_inode->i_ino > U32_MAX);
-		lblk_num |= (u64)ci->ci_inode->i_ino << 32;
+		WARN_ON_ONCE(cci->ci_inode->i_ino > U32_MAX);
+		lblk_num |= (u64)cci->ci_inode->i_ino << 32;
 	} else if (flags & FSCRYPT_POLICY_FLAG_IV_INO_LBLK_32) {
 		WARN_ON_ONCE(lblk_num > U32_MAX);
-		lblk_num = (u32)(ci->ci_hashed_ino + lblk_num);
+		lblk_num = (u32)(cci->ci_hashed_ino + lblk_num);
 	} else if (flags & FSCRYPT_POLICY_FLAG_DIRECT_KEY) {
-		memcpy(iv->nonce, ci->ci_nonce, FSCRYPT_FILE_NONCE_SIZE);
+		memcpy(iv->nonce, cci->ci_nonce, FSCRYPT_FILE_NONCE_SIZE);
 	}
 	iv->lblk_num = cpu_to_le64(lblk_num);
 }
@@ -108,9 +108,9 @@ int fscrypt_crypt_block(const struct inode *inode, fscrypt_direction_t rw,
 	DECLARE_CRYPTO_WAIT(wait);
 	struct scatterlist dst, src;
 	u64 ci_offset = 0;
-	struct fscrypt_info *ci =
+	struct fscrypt_common_info *cci =
 		fscrypt_get_lblk_info(inode, lblk_num, &ci_offset, NULL);
-	struct crypto_skcipher *tfm = ci->ci_enc_key->tfm;
+	struct crypto_skcipher *tfm = cci->ci_enc_key->tfm;
 	int res = 0;
 
 	if (WARN_ON_ONCE(len <= 0))
@@ -118,7 +118,7 @@ int fscrypt_crypt_block(const struct inode *inode, fscrypt_direction_t rw,
 	if (WARN_ON_ONCE(len % FSCRYPT_CONTENTS_ALIGNMENT != 0))
 		return -EINVAL;
 
-	fscrypt_generate_iv(&iv, lblk_num, ci);
+	fscrypt_generate_iv(&iv, lblk_num, cci);
 
 	req = skcipher_request_alloc(tfm, gfp_flags);
 	if (!req)
@@ -393,8 +393,8 @@ static int __init fscrypt_init(void)
 	if (!fscrypt_read_workqueue)
 		goto fail;
 
-	fscrypt_info_cachep = KMEM_CACHE(fscrypt_info, SLAB_RECLAIM_ACCOUNT);
-	if (!fscrypt_info_cachep)
+	fscrypt_inode_info_cachep = KMEM_CACHE(fscrypt_info, SLAB_RECLAIM_ACCOUNT);
+	if (!fscrypt_inode_info_cachep)
 		goto fail_free_queue;
 
 	err = fscrypt_init_keyring();
@@ -404,7 +404,7 @@ static int __init fscrypt_init(void)
 	return 0;
 
 fail_free_info:
-	kmem_cache_destroy(fscrypt_info_cachep);
+	kmem_cache_destroy(fscrypt_inode_info_cachep);
 fail_free_queue:
 	destroy_workqueue(fscrypt_read_workqueue);
 fail:
