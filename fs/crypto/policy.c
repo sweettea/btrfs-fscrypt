@@ -778,10 +778,9 @@ EXPORT_SYMBOL_GPL(fscrypt_set_context);
 int fscrypt_set_extent_context(struct fscrypt_extent_info *ci, void *ctx,
 			       size_t len)
 {
-	if (len < FSCRYPT_EXTENT_CONTEXT_MAX_SIZE)
+	if (len < FSCRYPT_SET_CONTEXT_MAX_SIZE)
 		return -EINVAL;
-	memcpy(ctx, ci->info.ci_nonce, FSCRYPT_FILE_NONCE_SIZE);
-	return FSCRYPT_FILE_NONCE_SIZE;
+	return fscrypt_new_context(ctx, &ci->info.ci_policy, ci->info.ci_nonce);
 }
 EXPORT_SYMBOL_GPL(fscrypt_set_extent_context);
 

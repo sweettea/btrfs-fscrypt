@@ -1061,25 +1061,25 @@ int fscrypt_load_extent_info(struct inode *inode, void *buf, size_t len,
 {
 	int res;
 	union fscrypt_context ctx;
-	const union fscrypt_policy *policy;
+	union fscrypt_policy policy;
 
 	if (!fscrypt_has_encryption_key(inode))
 		return -EINVAL;
 
-	if (len != FSCRYPT_FILE_NONCE_SIZE) {
+	memcpy(&ctx, buf, len);
+
+	res = fscrypt_policy_from_context(&policy, &ctx, len);
+	if (res) {
 		fscrypt_warn(inode,
 			     "Unrecognized or corrupt encryption context");
-		return -EINVAL;
+		return res;
 	}
 
-	policy = fscrypt_policy_to_inherit(inode);
-	if (policy == NULL)
-		return 0;
-	if (IS_ERR(policy))
-		return PTR_ERR(policy);
+	if (!fscrypt_supported_policy(&policy, inode))
+		return -EINVAL;
 
-	return fscrypt_setup_extent_info(inode, policy, buf,
-					 info_ptr);
+	return fscrypt_setup_extent_info(inode, &policy,
+					 fscrypt_context_nonce(&ctx), info_ptr);
 }
 EXPORT_SYMBOL_GPL(fscrypt_load_extent_info);
 
