@@ -957,3 +957,100 @@ int fscrypt_drop_inode(struct inode *inode)
 	return !is_master_key_secret_present(&ci->info.ci_master_key->mk_secret);
 }
 EXPORT_SYMBOL_GPL(fscrypt_drop_inode);
+
+static void put_crypt_extent_info(struct fscrypt_extent_info *ci)
+{
+	if (!ci)
+		return;
+
+	free_prepared_key(&ci->info);
+	remove_info_from_mk_decrypted_list(&ci->info);
+
+	memzero_explicit(ci, sizeof(*ci));
+	kmem_cache_free(fscrypt_extent_info_cachep, ci);
+}
+
+static int
+fscrypt_setup_extent_info(struct inode *inode,
+			  const union fscrypt_policy *policy,
+			  const u8 nonce[FSCRYPT_FILE_NONCE_SIZE],
+			  struct fscrypt_extent_info **info_ptr)
+{
+	struct fscrypt_extent_info *crypt_extent_info;
+	struct fscrypt_common_info *crypt_info;
+	struct fscrypt_master_key *mk = NULL;
+	int res;
+
+	crypt_extent_info = kmem_cache_zalloc(fscrypt_extent_info_cachep,
+					      GFP_KERNEL);
+	if (!crypt_extent_info)
+		return -ENOMEM;
+	crypt_info = &crypt_extent_info->info;
+
+	res = fscrypt_setup_common_info(crypt_info, inode, policy, nonce,
+					CI_EXTENT, &mk);
+	if (res)
+		goto out;
+
+	*info_ptr = crypt_extent_info;
+	add_info_to_mk_decrypted_list(crypt_info, mk);
+
+	crypt_extent_info = NULL;
+	res = 0;
+out:
+	if (mk) {
+		up_read(&mk->mk_sem);
+		fscrypt_put_master_key(mk);
+	}
+	put_crypt_extent_info(crypt_extent_info);
+	return res;
+}
+
+/**
+ * fscrypt_prepare_new_extent() - set up the fscrypt_extent_info for a new extent
+ * @inode: the inode to which the extent belongs
+ * @info_ptr: a pointer to return the extent's fscrypt_extent_info into
+ * *
+ * If the extent is part of an encrypted inode, set up a fscrypt_extent_info in
+ * preparation for encrypting data.
+ *
+ * This isn't %GFP_NOFS-safe.
+ *
+ * This doesn't persist the new extent's encryption context.  That still needs to
+ * be done later by calling fscrypt_set_extent_context().
+ *
+ * Return: 0 on success, -ENOKEY if the encryption key is missing, or another
+ *	   -errno code
+ */
+int fscrypt_prepare_new_extent(struct inode *inode,
+			       struct fscrypt_extent_info **info_ptr)
+{
+	const union fscrypt_policy *policy;
+	u8 nonce[FSCRYPT_FILE_NONCE_SIZE];
+
+	policy = fscrypt_policy_to_inherit(inode);
+	if (policy == NULL)
+		return 0;
+	if (IS_ERR(policy))
+		return PTR_ERR(policy);
+
+	/* Only regular files can have extents.  */
+	if (WARN_ON_ONCE(!S_ISREG(inode->i_mode)))
+		return -EINVAL;
+
+	get_random_bytes(nonce, FSCRYPT_FILE_NONCE_SIZE);
+	return fscrypt_setup_extent_info(inode, policy, nonce,
+					 info_ptr);
+}
+EXPORT_SYMBOL_GPL(fscrypt_prepare_new_extent);
+
+/**
+ * fscrypt_free_extent_info() - free an extent's fscrypt_extent_info
+ * @info_ptr: a pointer containing the extent's fscrypt_extent_info pointer.
+ */
+void fscrypt_free_extent_info(struct fscrypt_extent_info **info_ptr)
+{
+	put_crypt_extent_info(*info_ptr);
+	*info_ptr = NULL;
+}
+EXPORT_SYMBOL_GPL(fscrypt_free_extent_info);

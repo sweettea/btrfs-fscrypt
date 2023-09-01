@@ -294,12 +294,46 @@ struct fscrypt_info {
 };
 
 /*
+ * fscrypt_extent_info - the "encryption key" for an extent
  */
+struct fscrypt_extent_info {
+	struct fscrypt_common_info info;
+};
 
 typedef enum {
 	FS_DECRYPT = 0,
 	FS_ENCRYPT,
 } fscrypt_direction_t;
+
+/**
+ * fscrypt_fs_uses_extent_encryption() -- whether a filesystem uses extent
+ *					  encryption
+ *
+ * @sb: the superblock of the relevant filesystem
+ *
+ * Return: true if the fs uses extent encryption, else false
+ */
+static inline bool
+fscrypt_fs_uses_extent_encryption(const struct super_block *sb)
+{
+	return !!sb->s_cop->get_extent_info;
+}
+
+/**
+ * fscrypt_uses_extent_encryption() -- whether an inode uses extent encryption
+ *
+ * @inode: the inode in question
+ *
+ * Return: true if the inode uses extent encryption, else false
+ */
+static inline bool fscrypt_uses_extent_encryption(const struct inode *inode)
+{
+	/* Non-regular files don't have extents. */
+	if (!S_ISREG(inode->i_mode))
+		return false;
+
+	return fscrypt_fs_uses_extent_encryption(inode->i_sb);
+}
 
 /**
  * fscrypt_get_lblk_info() - get the fscrypt_common_info to crypt a particular
@@ -313,15 +347,26 @@ typedef enum {
  *              always be @lblk; for extent-based encryption, this will be in
  *              the range [0, lblk]. Can be NULL
  * @extent_len: a pointer to return the minimum number of lblks starting at
- *              this offset which also belong to the same fscrypt_info. Can be
- *              NULL
+ *              this offset which also belong to the same fscrypt_common_info.
+ *              Can be NULL
  *
- * Return: the appropriate fscrypt_info if there is one, else NULL.
+ * Return: the appropriate fscrypt_common_info if there is one, else NULL.
  */
 static inline struct fscrypt_common_info *
 fscrypt_get_lblk_info(const struct inode *inode, u64 lblk, u64 *offset,
 		      u64 *extent_len)
 {
+	if (fscrypt_uses_extent_encryption(inode)) {
+		struct fscrypt_extent_info *cei;
+		int res;
+
+		res = inode->i_sb->s_cop->get_extent_info(inode, lblk, &cei,
+							  offset, extent_len);
+		if (res == 0)
+			return &cei->info;
+		return NULL;
+	}
+
 	if (offset)
 		*offset = lblk;
 	if (extent_len)
@@ -330,9 +375,9 @@ fscrypt_get_lblk_info(const struct inode *inode, u64 lblk, u64 *offset,
 	return &inode->i_crypt_info->info;
 }
 
-
 /* crypto.c */
 extern struct kmem_cache *fscrypt_inode_info_cachep;
+extern struct kmem_cache *fscrypt_extent_info_cachep;
 int fscrypt_initialize(struct super_block *sb);
 int fscrypt_crypt_block(const struct inode *inode, fscrypt_direction_t rw,
 			u64 lblk_num, struct page *src_page,

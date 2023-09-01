@@ -272,6 +272,8 @@ void fscrypt_set_bio_crypt_ctx(struct bio *bio, const struct inode *inode,
 	if (!fscrypt_inode_uses_inline_crypto(inode))
 		return;
 	cci = fscrypt_get_lblk_info(inode, first_lblk, &ci_offset, NULL);
+	if (!cci)
+		return;
 
 	fscrypt_generate_dun(cci, ci_offset, dun);
 	bio_crypt_set_ctx(bio, cci->ci_enc_key->blk_key, dun, gfp_mask);
@@ -359,6 +361,9 @@ bool fscrypt_mergeable_bio(struct bio *bio, const struct inode *inode,
 		return true;
 
 	cci = fscrypt_get_lblk_info(inode, next_lblk, &ci_offset, NULL);
+	if (!cci)
+		return false;
+
 	/*
 	 * Comparing the key pointers is good enough, as all I/O for each key
 	 * uses the same pointer.  I.e., there's currently no need to support
