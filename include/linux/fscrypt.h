@@ -57,6 +57,7 @@ struct fscrypt_name {
 
 /* Maximum value for the third parameter of fscrypt_operations.set_context(). */
 #define FSCRYPT_SET_CONTEXT_MAX_SIZE	40
+#define FSCRYPT_EXTENT_CONTEXT_MAX_SIZE	16
 
 #ifdef CONFIG_FS_ENCRYPTION
 
@@ -317,6 +318,8 @@ int fscrypt_ioctl_get_nonce(struct file *filp, void __user *arg);
 int fscrypt_has_permitted_context(struct inode *parent, struct inode *child);
 int fscrypt_context_for_new_inode(void *ctx, struct inode *inode);
 int fscrypt_set_context(struct inode *inode, void *fs_data);
+int fscrypt_set_extent_context(struct fscrypt_extent_info *info, void *ctx,
+			       size_t len);
 
 struct fscrypt_dummy_policy {
 	const union fscrypt_policy *policy;
@@ -357,6 +360,9 @@ int fscrypt_drop_inode(struct inode *inode);
 int fscrypt_prepare_new_extent(struct inode *inode,
 			       struct fscrypt_extent_info **info_ptr);
 void fscrypt_free_extent_info(struct fscrypt_extent_info **info_ptr);
+int fscrypt_load_extent_info(struct inode *inode, void *buf, size_t len,
+			     struct fscrypt_extent_info **info_ptr);
+
 
 /* fname.c */
 int fscrypt_fname_encrypt(const struct inode *inode, const struct qstr *iname,
@@ -533,6 +539,12 @@ static inline int fscrypt_set_context(struct inode *inode, void *fs_data)
 	return -EOPNOTSUPP;
 }
 
+static inline int fscrypt_set_extent_context(struct fscrypt_info *info,
+					     void *ctx, size_t len)
+{
+	return -EOPNOTSUPP;
+}
+
 struct fscrypt_dummy_policy {
 };
 
@@ -630,6 +642,13 @@ fscrypt_prepare_new_extent(struct inode *inode,
 
 static inline void fscrypt_free_extent_info(struct fscrypt_extent_info **info_ptr)
 {
+}
+
+static inline int fscrypt_load_extent_info(struct inode *inode, void *buf,
+					   size_t len,
+					   struct fscrypt_info **info_ptr)
+{
+	return -EOPNOTSUPP;
 }
 
  /* fname.c */

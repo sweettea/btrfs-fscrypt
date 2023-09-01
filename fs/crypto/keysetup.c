@@ -1045,6 +1045,45 @@ int fscrypt_prepare_new_extent(struct inode *inode,
 EXPORT_SYMBOL_GPL(fscrypt_prepare_new_extent);
 
 /**
+ * fscrypt_load_extent_info() - load a preexisting extent's fscrypt_extent_info
+ * @inode: the inode to which the extent belongs. Must be encrypted.
+ * @buf: a buffer containing the extent's stored context
+ * @len: the length of the @ctx buffer
+ * @info_ptr: a pointer to return the extent's fscrypt_extent_info into
+ *
+ * This is not %GFP_NOFS safe, so the caller is expected to call
+ * memalloc_nofs_save/restore() if appropriate.
+ *
+ * Return: 0 if successful, or -errno if it fails.
+ */
+int fscrypt_load_extent_info(struct inode *inode, void *buf, size_t len,
+			     struct fscrypt_extent_info **info_ptr)
+{
+	int res;
+	union fscrypt_context ctx;
+	const union fscrypt_policy *policy;
+
+	if (!fscrypt_has_encryption_key(inode))
+		return -EINVAL;
+
+	if (len != FSCRYPT_FILE_NONCE_SIZE) {
+		fscrypt_warn(inode,
+			     "Unrecognized or corrupt encryption context");
+		return -EINVAL;
+	}
+
+	policy = fscrypt_policy_to_inherit(inode);
+	if (policy == NULL)
+		return 0;
+	if (IS_ERR(policy))
+		return PTR_ERR(policy);
+
+	return fscrypt_setup_extent_info(inode, policy, buf,
+					 info_ptr);
+}
+EXPORT_SYMBOL_GPL(fscrypt_load_extent_info);
+
+/**
  * fscrypt_free_extent_info() - free an extent's fscrypt_extent_info
  * @info_ptr: a pointer containing the extent's fscrypt_extent_info pointer.
  */
