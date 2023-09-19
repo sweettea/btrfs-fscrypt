@@ -18,6 +18,8 @@
 #include "fs.h"
 #include "accessors.h"
 #include "file-item.h"
+#include "super.h"
+#include "fscrypt.h"
 
 #define __MAX_CSUM_ITEMS(r, size) ((unsigned long)(((BTRFS_LEAF_DATA_SIZE(r) - \
 				   sizeof(struct btrfs_item) * 2) / \
@@ -1272,7 +1274,8 @@ out:
 void btrfs_extent_item_to_extent_map(struct btrfs_inode *inode,
 				     const struct btrfs_path *path,
 				     struct btrfs_file_extent_item *fi,
-				     struct extent_map *em)
+				     struct extent_map *em,
+				     struct btrfs_fscrypt_ctx *ctx)
 {
 	struct btrfs_fs_info *fs_info = inode->root->fs_info;
 	struct btrfs_root *root = inode->root;
@@ -1312,6 +1315,13 @@ void btrfs_extent_item_to_extent_map(struct btrfs_inode *inode,
 				em->flags |= EXTENT_FLAG_PREALLOC;
 		}
 		em->encryption_type = btrfs_file_extent_encryption(leaf, fi);
+		if (em->encryption_type != BTRFS_ENCRYPTION_NONE) {
+			ctx->size =
+				btrfs_file_extent_encryption_ctx_size(leaf, fi);
+			read_extent_buffer(leaf, ctx->ctx,
+				btrfs_file_extent_encryption_ctx_offset(fi),
+				ctx->size);
+		}
 	} else if (type == BTRFS_FILE_EXTENT_INLINE) {
 		/* Tree-checker has ensured this. */
 		ASSERT(extent_start == 0);

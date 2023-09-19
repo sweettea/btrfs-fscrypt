@@ -2960,6 +2960,9 @@ static int insert_reserved_file_extent(struct btrfs_trans_handle *trans,
 	size_t fscrypt_context_size = 0;
 	int ret;
 
+	if (btrfs_stack_file_extent_encryption(stack_fi))
+		fscrypt_context_size = btrfs_fscrypt_extent_context_size(inode);
+
 	path = btrfs_alloc_path();
 	if (!path)
 		return -ENOMEM;
@@ -2997,6 +3000,12 @@ static int insert_reserved_file_extent(struct btrfs_trans_handle *trans,
 	write_extent_buffer(leaf, stack_fi,
 			btrfs_item_ptr_offset(leaf, path->slots[0]),
 			sizeof(struct btrfs_file_extent_item));
+
+	if (fscrypt_context_size) {
+		ret = btrfs_fscrypt_save_extent_info(inode, path, fscrypt_info);
+		if (ret)
+			goto out;
+	}
 
 	btrfs_mark_buffer_dirty(trans, leaf);
 	btrfs_release_path(path);
@@ -6929,6 +6938,7 @@ struct extent_map *btrfs_get_extent(struct btrfs_inode *inode,
 	struct btrfs_key found_key;
 	struct extent_map *em = NULL;
 	struct extent_map_tree *em_tree = &inode->extent_tree;
+	struct btrfs_fscrypt_ctx ctx;
 
 	read_lock(&em_tree->lock);
 	em = lookup_extent_mapping(em_tree, start, len);
@@ -6942,6 +6952,9 @@ struct extent_map *btrfs_get_extent(struct btrfs_inode *inode,
 		else
 			goto out;
 	}
+
+	ctx.size = 0;
+
 	em = alloc_extent_map();
 	if (!em) {
 		ret = -ENOMEM;
@@ -7046,7 +7059,7 @@ next:
 		goto insert;
 	}
 
-	btrfs_extent_item_to_extent_map(inode, path, item, em);
+	btrfs_extent_item_to_extent_map(inode, path, item, em, &ctx);
 
 	if (extent_type == BTRFS_FILE_EXTENT_REG ||
 	    extent_type == BTRFS_FILE_EXTENT_PREALLOC) {
@@ -7089,6 +7102,10 @@ insert:
 		ret = -EIO;
 		goto out;
 	}
+
+	ret = btrfs_fscrypt_load_extent_info(inode, em, &ctx);
+	if (ret)
+		goto out;
 
 	write_lock(&em_tree->lock);
 	ret = btrfs_add_extent_mapping(inode, &em, start, len);
@@ -9684,6 +9701,9 @@ static struct btrfs_trans_handle *insert_prealloc_file_extent(
 			goto free_qgroup;
 		return trans;
 	}
+
+	if (fscrypt_info)
+		fscrypt_context_size = btrfs_fscrypt_extent_context_size(inode);
 
 	extent_info.disk_offset = start;
 	extent_info.disk_len = len;
