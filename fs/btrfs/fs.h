@@ -26,6 +26,7 @@
 #include <linux/rbtree.h>
 #include <uapi/linux/btrfs.h>
 #include <uapi/linux/btrfs_tree.h>
+#include <linux/fscrypt.h>
 #include "extent-io-tree.h"
 #include "async-thread.h"
 #include "block-rsv.h"
@@ -225,6 +226,7 @@ enum {
 	BTRFS_MOUNT_IGNOREDATACSUMS		= (1UL << 28),
 	BTRFS_MOUNT_NODISCARD			= (1UL << 29),
 	BTRFS_MOUNT_NOSPACECACHE		= (1UL << 30),
+	BTRFS_MOUNT_TEST_DUMMY_ENCRYPTION	= (1UL << 31),
 };
 
 /*
@@ -871,6 +873,7 @@ struct btrfs_fs_info {
 	spinlock_t eb_leak_lock;
 	struct list_head allocated_ebs;
 #endif
+	struct fscrypt_dummy_policy dummy_enc_policy;
 };
 
 #define page_to_inode(_page)	(BTRFS_I(_Generic((_page),			\
