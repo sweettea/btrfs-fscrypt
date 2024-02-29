@@ -1822,6 +1822,143 @@ static noinline int btrfs_ioctl_tree_search_v2(struct inode *inode,
 	return ret;
 }
 
+static noinline int btrfs_ioctl_subvolid_resolve(struct file *file,
+					         void __user *arg)
+{
+	struct inode *inode = file_inode(file);
+	struct dentry *parent = file->f_path.dentry;
+	struct dentry *dentry;
+	struct inode *dir = d_inode(parent);
+	struct btrfs_fs_info *fs_info = inode_to_fs_info(dir);
+	struct inode *inode;
+	struct btrfs_root *root = BTRFS_I(dir)->root;
+	struct btrfs_root *dest = NULL;
+	struct btrfs_ioctl_vol_args *vol_args = NULL;
+	struct btrfs_ioctl_vol_args_v2 *vol_args2 = NULL;
+	struct mnt_idmap *idmap = file_mnt_idmap(file);
+	char *subvol_name, *subvol_name_ptr = NULL;
+	int subvol_namelen;
+	int err = 0;
+	u64 subvolid;
+	struct inode *old_dir;
+
+	if (!inode_owner_or_capable(file_mnt_idmap(file), inode))
+		return -EPERM;
+
+	if (copy_from_user(&subvolid, arg, sizeof(subvolid)))
+		ret = -EFAULT;
+
+	if (subvolid < BTRFS_FIRST_FREE_OBJECTID) {
+		err = -EINVAL;
+		goto out;
+	}
+
+	err = mnt_want_write_file(file);
+	if (err)
+		goto out;
+
+	dentry = btrfs_get_dentry(fs_info->sb,
+			BTRFS_FIRST_FREE_OBJECTID,
+			subvolid, 0);
+	if (IS_ERR(dentry)) {
+		err = PTR_ERR(dentry);
+		goto out_drop_write;
+	}
+
+	/*
+	 * Change the default parent since the subvolume being
+	 * hunted can be outside of the current mount point.
+	 */
+	parent = btrfs_get_parent(dentry);
+
+	/*
+	 * At this point dentry->d_name can point to '/' if the
+	 * subvolume we want to find is outside of the
+	 * current mount point, so we need to release the
+	 * current dentry and execute the lookup to return a new
+	 * one with ->d_name pointing to the
+	 * <mount point>/subvol_name.
+	 */
+	dput(dentry);
+	if (IS_ERR(parent)) {
+		err = PTR_ERR(parent);
+		goto out_drop_write;
+	}
+	old_dir = dir;
+	dir = d_inode(parent);
+
+	/*
+	 * On idmapped mounts, search via subvolid is
+	 * restricted to subvolumes that are immediate
+	 * ancestors of the inode referenced by the file
+	 * descriptor in the ioctl. Otherwise the idmapping
+	 * could potentially be abused to find subvolumes
+	 * anywhere in the filesystem the user wouldn't be able
+	 * to delete without an idmapped mount.
+	 */
+	if (old_dir != dir && idmap != &nop_mnt_idmap) {
+		err = -EOPNOTSUPP;
+		goto free_parent;
+	}
+
+	subvol_name_ptr = btrfs_get_subvol_name_from_objectid(
+				fs_info, subvolid);
+	if (IS_ERR(subvol_name_ptr)) {
+		err = PTR_ERR(subvol_name_ptr);
+		goto free_parent;
+	}
+	/* subvol_name_ptr is already nul terminated */
+	subvol_name = (char *)kbasename(subvol_name_ptr);
+	subvol_namelen = strlen(subvol_name);
+
+	if (!S_ISDIR(dir->i_mode)) {
+		err = -ENOTDIR;
+		goto free_subvol_name;
+	}
+
+	err = down_write_killable_nested(&dir->i_rwsem, I_MUTEX_PARENT);
+	if (err == -EINTR)
+		goto free_subvol_name;
+	dentry = lookup_one(idmap, subvol_name, parent, subvol_namelen);
+	if (IS_ERR(dentry)) {
+		err = PTR_ERR(dentry);
+		goto out_unlock_dir;
+	}
+
+	if (d_really_is_negative(dentry)) {
+		err = -ENOENT;
+		goto out_dput;
+	}
+
+	inode = d_inode(dentry);
+	dest = BTRFS_I(inode)->root;
+	if (!capable(CAP_SYS_ADMIN)) {
+		/* Regular user. */
+		err = inode_permission(idmap, inode, MAY_READ);
+		if (err)
+			goto out_dput;
+	}
+
+
+	/* copy back to user the name somewhere in here */
+out_dput:
+	dput(dentry);
+free_subvol_name:
+	kfree(subvol_name_ptr);
+free_parent:
+	if (destroy_parent)
+		dput(parent);
+out_drop_write:
+	mnt_drop_write_file(file);
+out:
+	kfree(vol_args2);
+	kfree(vol_args);
+	return err;
+}
+
+}
+
+
 /*
  * Search INODE_REFs to identify path name of 'dirid' directory
  * in a 'tree_id' tree. and sets path name to 'name'.
@@ -4647,6 +4784,8 @@ long btrfs_ioctl(struct file *file, unsigned int
 		return btrfs_ioctl_subvol_setflags(file, argp);
 	case BTRFS_IOC_DEFAULT_SUBVOL:
 		return btrfs_ioctl_default_subvol(file, argp);
+	case BTRFS_IOC_SUBVOLID_RESOLVE:
+		return btrfs_ioctl_subvolid_resolve(file, argp);
 	case BTRFS_IOC_DEFRAG:
 		return btrfs_ioctl_defrag(file, NULL);
 	case BTRFS_IOC_DEFRAG_RANGE:
