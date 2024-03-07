@@ -1408,13 +1408,16 @@ static ssize_t fuse_cache_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	ssize_t err, count;
 	struct fuse_conn *fc = get_fuse_conn(inode);
 
-	if (fc->writeback_cache) {
-		/* Update size (EOF optimization) and mode (SUID clearing) */
-		err = fuse_update_attributes(mapping->host, file,
-					     STATX_SIZE | STATX_MODE);
-		if (err)
-			return err;
+	/*
+	 * Update size (EOF optimization, and O_APPEND correctness) and
+	 * mode (SUID clearing)
+	 */
+	err = fuse_update_attributes(mapping->host, file,
+				     STATX_SIZE | STATX_MODE);
+	if (err)
+		return err;
 
+	if (fc->writeback_cache) {
 		if (fc->handle_killpriv_v2 &&
 		    setattr_should_drop_suidgid(&nop_mnt_idmap,
 						file_inode(file))) {
@@ -1666,10 +1669,19 @@ static ssize_t fuse_direct_read_iter(struct kiocb *iocb, struct iov_iter *to)
 
 static ssize_t fuse_direct_write_iter(struct kiocb *iocb, struct iov_iter *from)
 {
-	struct inode *inode = file_inode(iocb->ki_filp);
+	struct file *file = iocb->ki_filp;
+	struct inode *inode = file_inode(file);
 	struct fuse_io_priv io = FUSE_IO_PRIV_SYNC(iocb);
 	ssize_t res;
 	bool exclusive;
+	/*
+	 * For O_APPEND files, we need to make sure the size is right before
+	 * generic_write_checks() grabs it.
+	 */
+	res = fuse_update_attributes(file->f_mapping->host, file, STATX_SIZE);
+	if (res)
+		return res;
+
 
 	fuse_dio_lock(iocb, from, &exclusive);
 	res = generic_write_checks(iocb, from);
@@ -2815,7 +2827,11 @@ static loff_t fuse_file_llseek(struct file *file, loff_t offset, int whence)
 	switch (whence) {
 	case SEEK_SET:
 	case SEEK_CUR:
-		 /* No i_mutex protection necessary for SEEK_CUR and SEEK_SET */
+		 /*
+		  * No i_mutex protection necessary for SEEK_CUR and SEEK_SET.
+		  * Even if we seek to a point outside the currently known size,
+		  * read and write will update the attributes before doing IO
+		  */
 		retval = generic_file_llseek(file, offset, whence);
 		break;
 	case SEEK_END:
