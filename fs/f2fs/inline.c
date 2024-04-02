@@ -808,7 +808,7 @@ int f2fs_inline_data_fiemap(struct inode *inode,
 					(char *)F2FS_INODE(ipage);
 	err = fiemap_fill_next_extent(
 			fieinfo, start, byteaddr, ilen, 0, flags);
-	trace_f2fs_fiemap(inode, start, byteaddr, ilen, flags, err);
+	trace_f2fs_fiemap(inode, start, byteaddr, ilen, 0, flags, err);
 out:
 	f2fs_put_page(ipage, 1);
 	return err;
