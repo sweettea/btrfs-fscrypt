@@ -772,7 +772,7 @@ int f2fs_inline_data_fiemap(struct inode *inode,
 {
 	__u64 byteaddr, ilen;
 	__u32 flags = FIEMAP_EXTENT_DATA_INLINE | FIEMAP_EXTENT_NOT_ALIGNED |
-		FIEMAP_EXTENT_LAST;
+		FIEMAP_EXTENT_HAS_PHYS_LEN | FIEMAP_EXTENT_LAST;
 	struct node_info ni;
 	struct page *ipage;
 	int err = 0;

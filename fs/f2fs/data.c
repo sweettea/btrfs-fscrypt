@@ -1829,7 +1829,9 @@ static int f2fs_xattr_fiemap(struct inode *inode,
 
 		f2fs_put_page(page, 1);
 
-		flags = FIEMAP_EXTENT_DATA_INLINE | FIEMAP_EXTENT_NOT_ALIGNED;
+		flags = FIEMAP_EXTENT_DATA_INLINE |
+			FIEMAP_EXTENT_NOT_ALIGNED |
+			FIEMAP_EXTENT_HAS_PHYS_LEN;
 
 		if (!xnid)
 			flags |= FIEMAP_EXTENT_LAST;
@@ -1857,7 +1859,7 @@ static int f2fs_xattr_fiemap(struct inode *inode,
 
 		f2fs_put_page(page, 1);
 
-		flags = FIEMAP_EXTENT_LAST;
+		flags = FIEMAP_EXTENT_LAST | FIEMAP_EXTENT_HAS_PHYS_LEN;
 	}
 
 	if (phys) {
@@ -1894,8 +1896,8 @@ int f2fs_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 	struct f2fs_map_blocks map;
 	sector_t start_blk, last_blk;
 	pgoff_t next_pgofs;
-	u64 logical = 0, phys = 0, size = 0;
-	u32 flags = 0;
+	u64 logical = 0, phys = 0, size = 0, phys_size = 0;
+	u32 flags = FIEMAP_EXTENT_HAS_PHYS_LEN;
 	int ret = 0;
 	bool compr_cluster = false, compr_appended;
 	unsigned int cluster_size = F2FS_I(inode)->i_cluster_size;
@@ -1981,11 +1983,12 @@ next:
 			flags |= FIEMAP_EXTENT_DATA_ENCRYPTED;
 
 		ret = fiemap_fill_next_extent(fieinfo, logical,
-				phys, size, 0, flags);
-		trace_f2fs_fiemap(inode, logical, phys, size, 0, flags, ret);
+				phys, size, phys_size, flags);
+		trace_f2fs_fiemap(inode, logical, phys, size, phys_size, flags, ret);
 		if (ret)
 			goto out;
 		size = 0;
+		phys_size = 0;
 	}
 
 	if (start_blk > last_blk)
@@ -2006,17 +2009,21 @@ skip_fill:
 		phys = __is_valid_data_blkaddr(map.m_pblk) ?
 			blks_to_bytes(inode, map.m_pblk) : 0;
 		size = blks_to_bytes(inode, map.m_len);
-		flags = 0;
+		phys_size = blks_to_bytes(inode, map.m_len);
+		flags = FIEMAP_EXTENT_HAS_PHYS_LEN;
 
 		if (compr_cluster) {
-			flags = FIEMAP_EXTENT_ENCODED;
+			flags = (FIEMAP_EXTENT_ENCODED |
+				 FIEMAP_EXTENT_HAS_PHYS_LEN);
 			count_in_cluster += map.m_len;
 			if (count_in_cluster == cluster_size) {
 				compr_cluster = false;
 				size += blks_to_bytes(inode, 1);
+				phys_size += blks_to_bytes(inode, 1);
 			}
 		} else if (map.m_flags & F2FS_MAP_DELALLOC) {
-			flags = FIEMAP_EXTENT_UNWRITTEN;
+			flags = (FIEMAP_EXTENT_UNWRITTEN |
+				 FIEMAP_EXTENT_HAS_PHYS_LEN);
 		}
 
 		start_blk += bytes_to_blks(inode, size);
