@@ -1160,7 +1160,7 @@ int nilfs_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 {
 	struct the_nilfs *nilfs = inode->i_sb->s_fs_info;
 	__u64 logical = 0, phys = 0, size = 0;
-	__u32 flags = 0;
+	__u32 flags = FIEMAP_EXTENT_HAS_PHYS_LEN;
 	loff_t isize;
 	sector_t blkoff, end_blkoff;
 	sector_t delalloc_blkoff;
@@ -1197,7 +1197,9 @@ int nilfs_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 			if (blkoff > end_blkoff)
 				break;
 
-			flags = FIEMAP_EXTENT_MERGED | FIEMAP_EXTENT_DELALLOC;
+			flags = (FIEMAP_EXTENT_MERGED |
+				 FIEMAP_EXTENT_DELALLOC |
+				 FIEMAP_EXTENT_HAS_PHYS_LEN);
 			logical = blkoff << blkbits;
 			phys = 0;
 			size = delalloc_blklen << blkbits;
@@ -1261,14 +1263,16 @@ int nilfs_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 						break;
 
 					/* Start another extent */
-					flags = FIEMAP_EXTENT_MERGED;
+					flags = (FIEMAP_EXTENT_MERGED |
+						 FIEMAP_EXTENT_HAS_PHYS_LEN);
 					logical = blkoff << blkbits;
 					phys = blkphy << blkbits;
 					size = n << blkbits;
 				}
 			} else {
 				/* Start a new extent */
-				flags = FIEMAP_EXTENT_MERGED;
+				flags = (FIEMAP_EXTENT_MERGED |
+					 FIEMAP_EXTENT_HAS_PHYS_LEN);
 				logical = blkoff << blkbits;
 				phys = blkphy << blkbits;
 				size = n << blkbits;
