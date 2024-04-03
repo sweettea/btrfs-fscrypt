@@ -913,15 +913,17 @@ static int bch2_fill_extent(struct bch_fs *c,
 			flags |= FIEMAP_EXTENT_SHARED;
 
 		bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
-			int flags2 = 0;
+			int flags2 = FIEMAP_EXTENT_HAS_PHYS_LEN;
+			u64 phys_len = k.k->size << 9;
 			u64 offset = p.ptr.offset;
 
 			if (p.ptr.unwritten)
 				flags2 |= FIEMAP_EXTENT_UNWRITTEN;
 
-			if (p.crc.compression_type)
+			if (p.crc.compression_type) {
 				flags2 |= FIEMAP_EXTENT_ENCODED;
-			else
+				phys_len = p.crc.compressed_size << 9;
+			} else
 				offset += p.crc.offset;
 
 			if ((offset & (block_sectors(c) - 1)) ||
@@ -931,7 +933,7 @@ static int bch2_fill_extent(struct bch_fs *c,
 			ret = fiemap_fill_next_extent(info,
 						bkey_start_offset(k.k) << 9,
 						offset << 9,
-						k.k->size << 9, 0,
+						k.k->size << 9, phys_len,
 						flags|flags2);
 			if (ret)
 				return ret;
@@ -941,14 +943,18 @@ static int bch2_fill_extent(struct bch_fs *c,
 	} else if (bkey_extent_is_inline_data(k.k)) {
 		return fiemap_fill_next_extent(info,
 					       bkey_start_offset(k.k) << 9,
-					       0, k.k->size << 9, 0,
+					       0, k.k->size << 9,
+					       bkey_inline_data_bytes(k.k),
 					       flags|
+					       FIEMAP_EXTENT_HAS_PHYS_LEN|
 					       FIEMAP_EXTENT_DATA_INLINE);
 	} else if (k.k->type == KEY_TYPE_reservation) {
 		return fiemap_fill_next_extent(info,
 					       bkey_start_offset(k.k) << 9,
-					       0, k.k->size << 9, 0,
+					       0, k.k->size << 9,
+					       k.k->size << 9,
 					       flags|
+					       FIEMAP_EXTENT_HAS_PHYS_LEN|
 					       FIEMAP_EXTENT_DELALLOC|
 					       FIEMAP_EXTENT_UNWRITTEN);
 	} else {
