@@ -2013,7 +2013,7 @@ skip_fill:
 		flags = FIEMAP_EXTENT_HAS_PHYS_LEN;
 
 		if (compr_cluster) {
-			flags = (FIEMAP_EXTENT_ENCODED |
+			flags = (FIEMAP_EXTENT_DATA_COMPRESSED |
 				 FIEMAP_EXTENT_HAS_PHYS_LEN);
 			count_in_cluster += map.m_len;
 			if (count_in_cluster == cluster_size) {
