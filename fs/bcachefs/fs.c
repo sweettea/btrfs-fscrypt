@@ -921,7 +921,7 @@ static int bch2_fill_extent(struct bch_fs *c,
 				flags2 |= FIEMAP_EXTENT_UNWRITTEN;
 
 			if (p.crc.compression_type) {
-				flags2 |= FIEMAP_EXTENT_ENCODED;
+				flags2 |= FIEMAP_EXTENT_DATA_COMPRESSED;
 				phys_len = p.crc.compressed_size << 9;
 			} else
 				offset += p.crc.offset;
